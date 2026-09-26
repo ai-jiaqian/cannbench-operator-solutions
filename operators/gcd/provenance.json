@@ -1,0 +1,19 @@
+{
+  "operator_key": "gcd",
+  "operator_name": "Gcd",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_2bcd0f899d41",
+  "submission_id": "sub_62f16b03d2f8",
+  "score": 80.73072584282417,
+  "avg_speedup": 1.7245816620494285,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-20T09:54:03.085283",
+  "source_job_scaffold": "jobs/job_2bcd0f899d41",
+  "files": {
+    "csrc/ops/gcd/CMakeLists.txt": "8b3b346f2667751d6b6019bcea5c5f954fe8214e7e88a29e8fe2829d72675da1",
+    "csrc/ops/gcd/op_kernel/gcd_kernel.cpp": "8e65f1f6b9bc6fa435e8d8cd4ab09336c93d5154139a23ed5013d981747977c1",
+    "csrc/ops/gcd/op_kernel/gcd_launch.h": "824eda775b38d1cb4817bf36dc4dd6f5ee424478c1e0b3039bf910b1d7c2df69",
+    "csrc/ops/gcd/op_plugin/gcd_plugin.cpp": "615f5f3d3493e76702b5c3d1b18a6af44980875208ca2528ac9a9c085844cd17"
+  }
+}

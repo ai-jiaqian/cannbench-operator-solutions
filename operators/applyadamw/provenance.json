@@ -1,0 +1,19 @@
+{
+  "operator_key": "applyadamw",
+  "operator_name": "ApplyAdamW",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_0c47cac62dbd",
+  "submission_id": "sub_1c171c4a4e4e",
+  "score": 86.43530341386595,
+  "avg_speedup": 2.0581919777881046,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-24T09:33:23.053537",
+  "source_job_scaffold": "jobs/job_0c47cac62dbd",
+  "files": {
+    "csrc/ops/apply_adam_w/CMakeLists.txt": "c3f419eb1a00ea731f1acab08bb4c12a1b2542ae26dfe84006f126129d68b948",
+    "csrc/ops/apply_adam_w/op_kernel/apply_adam_w_kernel.cpp": "0fbc0a18a6476a5bb497d37df700d12efa03e87e37dd44a4f1fc05d15a6a6f81",
+    "csrc/ops/apply_adam_w/op_kernel/apply_adam_w_launch.h": "361ffb30ec1fcd913cc3637d3086e09b808af7e81c8cdc675d8214aa252256bd",
+    "csrc/ops/apply_adam_w/op_plugin/apply_adam_w_plugin.cpp": "41ecce7509a3105b0d01237d6033b545d31e6a6cd82287618fb50f28dae8620f"
+  }
+}

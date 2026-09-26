@@ -1,0 +1,19 @@
+{
+  "operator_key": "topk",
+  "operator_name": "TopK",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_7fcd35ccf2ca",
+  "submission_id": "sub_06b4ec3812ee",
+  "score": 59.70838420531442,
+  "avg_speedup": 0.29012693656411165,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-24T19:47:37.398781",
+  "source_job_scaffold": "jobs/job_7fcd35ccf2ca",
+  "files": {
+    "csrc/ops/top_k/CMakeLists.txt": "28fde11f778bb699fc04aeed55624bc4b3c8c1d0191e4d4ba6939c20cd990c77",
+    "csrc/ops/top_k/op_kernel/topk_kernel.cpp": "f8c2d50fee6f65e78b92a840c0a79a611daf965290451d1b99e315782df4aa4e",
+    "csrc/ops/top_k/op_kernel/topk_launch.h": "45ca1a7e423de83c58db7a613a1dc6064f87a1a34e35d806323fa2abf116613c",
+    "csrc/ops/top_k/op_plugin/topk_plugin.cpp": "ef1d6c7edc63888c5a331999626777539e0c5105cd0b1fd401f4642a0eece68a"
+  }
+}

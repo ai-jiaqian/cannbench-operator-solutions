@@ -1,0 +1,19 @@
+{
+  "operator_key": "gru",
+  "operator_name": "GRU",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_b9c109980bd6",
+  "submission_id": "sub_f325c70f0e7f",
+  "score": 55.11025587954791,
+  "avg_speedup": 0.14174154153378757,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-23T16:34:20.678437",
+  "source_job_scaffold": "jobs/job_b9c109980bd6",
+  "files": {
+    "csrc/ops/gru/CMakeLists.txt": "664656153620ca9287eb958e2d32191fa8362ae59a77aa4f8c7aeac0495f649e",
+    "csrc/ops/gru/op_kernel/gru_kernel.cpp": "084c69663217eb90e2b13b3ba6d7a57a64878074e90236447140bf225e365552",
+    "csrc/ops/gru/op_kernel/gru_launch.h": "1fbf6b94557c1ad838c67da89f853f909c80f9eed9001bbc50824289cee6999b",
+    "csrc/ops/gru/op_plugin/gru_plugin.cpp": "ce96448e3bd4d470fbca7c5edec82a0436db3af613516093ff3dba665e081edc"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "operator_key": "gqa",
+  "operator_name": "GQA",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_2bcd0f899d41",
+  "submission_id": "sub_62f16b03d2f8",
+  "score": 59.5969189966951,
+  "avg_speedup": 0.3129925098423497,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-20T09:54:03.085283",
+  "source_job_scaffold": "jobs/job_2bcd0f899d41",
+  "files": {
+    "csrc/ops/gqa/CMakeLists.txt": "3a03ce875670ed2b5f9e2f35cc87793e25a33a90571eb787c197d51f4691e6a9",
+    "csrc/ops/gqa/op_kernel/gqa_dev_tiling.h": "d77d4136bd5ce07bd3265881ed15d4bb750731890bd74e0fd24ce9d7f49bbdd8",
+    "csrc/ops/gqa/op_kernel/gqa_launch.h": "39372128e57a30bdaefbb7671eb52500b9786be6bd8b4f68768def4c0d9e4aaa",
+    "csrc/ops/gqa/op_kernel/gqa_pack_kernel.cpp": "f6ed7636dd1055248ed4dfc98091909f3175de5e82f6b2db83defb6bb7cffc43",
+    "csrc/ops/gqa/op_kernel/gqa_pv_kernel.cpp": "8f7259b3d46f23dd559865b20d25b7501818b2b0e99f50c53b6debbb349a680d",
+    "csrc/ops/gqa/op_kernel/gqa_qk_kernel.cpp": "1dac8dec200af8078fdb20b35380a9fad52ee42cdb421f2c406462a6b0a3e011",
+    "csrc/ops/gqa/op_kernel/gqa_softmax_flat_kernel.cpp": "1aaa3f1e9b84ef946993cb877f8a0a1fdaa0cb15bfc793e471bfa2e9aabbb5cf",
+    "csrc/ops/gqa/op_kernel/gqa_softmax_kernel.cpp": "1ae2e557476d8e9b55c0b76541442854c13d8844aabb5e02cebe8296b0b9ea4b",
+    "csrc/ops/gqa/op_kernel/gqa_unpack_kernel.cpp": "7eb8dbb5ddbd6f1c4fac44ed8a0dcdf3550d7f11b7b7391ca979e8b08a3a540b",
+    "csrc/ops/gqa/op_plugin/gqa_plugin.cpp": "72974d2a8d22e77dbd7305fc33f1b3652122b852ff9bbac880b5fa9af2a29395"
+  }
+}

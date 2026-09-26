@@ -1,0 +1,21 @@
+{
+  "operator_key": "mla",
+  "operator_name": "MLA",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_e2005e05b297",
+  "submission_id": "sub_8e86304f20f5",
+  "score": 66.085010705623,
+  "avg_speedup": 0.5809548970532418,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-24T16:51:45.779416",
+  "source_job_scaffold": "jobs/job_e2005e05b297",
+  "files": {
+    "csrc/ops/mla/CMakeLists.txt": "323e403a314140c11fed3901667eb5d494756d080a9f829914b00d6df6e196c9",
+    "csrc/ops/mla/op_kernel/mla_cube.cpp": "cbb3a91b5d9ddec9a8e8066d8f149aefc0562b27ae5fff27462c8530b7f83692",
+    "csrc/ops/mla/op_kernel/mla_launch.h": "c7245458b9c104fc66ded10141b067477cb6c62180aab184f823dcdfdb43228f",
+    "csrc/ops/mla/op_kernel/mla_softmax.cpp": "50dd2143888c1e44d3fac062255e494a2f020751a72319d2404bd6f6e55992ff",
+    "csrc/ops/mla/op_kernel/mla_tiling.cpp": "cf14b644f7147c7ea86e676835c8b5ee68763b87d707bb80a399c8ab09bb3571",
+    "csrc/ops/mla/op_plugin/mla_plugin.cpp": "613025430c8e201048352a12abeda4e5b135df3e568baa7cca9de45cd7b85be2"
+  }
+}

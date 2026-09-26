@@ -1,0 +1,19 @@
+{
+  "operator_key": "mha",
+  "operator_name": "MHA",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_2bcd0f899d41",
+  "submission_id": "sub_62f16b03d2f8",
+  "score": 60.42461087526315,
+  "avg_speedup": 0.4253468373409056,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-20T09:54:03.085283",
+  "source_job_scaffold": "jobs/job_2bcd0f899d41",
+  "files": {
+    "csrc/ops/mha/CMakeLists.txt": "17550e8a38a3f4321e4409c4f79afd0bdd645dd988b621a62b8966d98a9e10dc",
+    "csrc/ops/mha/op_kernel/mha_kernel.cpp": "fc7895604ed952e8ca4b9ca532e6735ee94b711134f9e19c7d3cc5cb1190fc37",
+    "csrc/ops/mha/op_kernel/mha_launch.h": "b7baf1cd831e20cd04f521622d037f0a1a06b5a4f6f277bf96632a53bdaf4818",
+    "csrc/ops/mha/op_plugin/mha_plugin.cpp": "839093e194f6d26d9667b5b6e9b381cad270dd4552198a9f764f1517dfc964ea"
+  }
+}

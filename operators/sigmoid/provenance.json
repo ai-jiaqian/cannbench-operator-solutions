@@ -1,0 +1,19 @@
+{
+  "operator_key": "sigmoid",
+  "operator_name": "Sigmoid",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_430849cb00ba",
+  "submission_id": "sub_9a95bfc699a1",
+  "score": 73.03724662395257,
+  "avg_speedup": 0.9381950214805579,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-23T09:51:25.681793",
+  "source_job_scaffold": "jobs/job_430849cb00ba",
+  "files": {
+    "csrc/ops/sigmoid/CMakeLists.txt": "ca52c8bf146c092f953d1c583f58565c058cbd90c866d250a49e6c256a40fa9e",
+    "csrc/ops/sigmoid/op_kernel/sigmoid_kernel.cpp": "f358c225b3154b440ba9a5445c09cb1aa73a28241cee5bddb6318a539b07c2b5",
+    "csrc/ops/sigmoid/op_kernel/sigmoid_launch.h": "ec22b83acebd9a9350764082fa8c2be169c35fb6a6b47e437c2d0ebe75df080d",
+    "csrc/ops/sigmoid/op_plugin/sigmoid_plugin.cpp": "bd2fa2535048e90e49cea7448bef02b6b9aae074fead8aa8a52c73dd460710b2"
+  }
+}

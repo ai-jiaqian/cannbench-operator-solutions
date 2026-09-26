@@ -1,0 +1,19 @@
+{
+  "operator_key": "rmsnorm",
+  "operator_name": "RmsNorm",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_5a8dbd34f4ed",
+  "submission_id": "sub_468b974e6a3a",
+  "score": 78.31496351807256,
+  "avg_speedup": 1.305646006055946,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-25T06:25:41.891162",
+  "source_job_scaffold": "jobs/job_5a8dbd34f4ed",
+  "files": {
+    "csrc/ops/rms_norm/CMakeLists.txt": "99b357ff2f399e4cce9ed6d72ec3546b61d6201acb29410fd4a3b3f6adf2eea5",
+    "csrc/ops/rms_norm/op_kernel/rms_norm_kernel.cpp": "f69d291b8179e6b00e08608f2bdcd78d449d87b110cac7a8e0d60e48f1aa8d52",
+    "csrc/ops/rms_norm/op_kernel/rms_norm_launch.h": "6fe1986b4e04f19e883e98ff52bf76c663bf6ae63c17d135e16843a5e91448ee",
+    "csrc/ops/rms_norm/op_plugin/rms_norm_plugin.cpp": "9d1198b218c934741b2241e0943b176b37186772180dce894b177319d3623a4a"
+  }
+}

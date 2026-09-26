@@ -1,0 +1,19 @@
+{
+  "operator_key": "lstm",
+  "operator_name": "LSTM",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_9ff45fdb230e",
+  "submission_id": "sub_ba4e38c0f591",
+  "score": 55.385740799005546,
+  "avg_speedup": 0.13947993041724,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-23T17:01:18.581921",
+  "source_job_scaffold": "jobs/job_9ff45fdb230e",
+  "files": {
+    "csrc/ops/lstm/CMakeLists.txt": "bafc630ea95994caae42036d0f079a5ba932d0115ff275a4a218af47d523acfa",
+    "csrc/ops/lstm/op_kernel/lstm_kernel.cpp": "850a3d32fa59fef24378aa1d712d9fb23f13f3059c7b86299da8c5d0962d2917",
+    "csrc/ops/lstm/op_kernel/lstm_launch.h": "fa4626aa5a064f80716e8208015fe142299b3c95d90cf3f4911722a58a78cca5",
+    "csrc/ops/lstm/op_plugin/lstm_plugin.cpp": "280313460d93939e138c0c813949036840b3be49225dcf73719bc63e765d21d0"
+  }
+}

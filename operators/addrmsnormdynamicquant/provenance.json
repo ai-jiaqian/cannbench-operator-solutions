@@ -1,0 +1,19 @@
+{
+  "operator_key": "addrmsnormdynamicquant",
+  "operator_name": "AddRmsNormDynamicQuant",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_2bcd0f899d41",
+  "submission_id": "sub_62f16b03d2f8",
+  "score": 76.30120512373517,
+  "avg_speedup": 1.1400479657539901,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-20T09:54:03.085283",
+  "source_job_scaffold": "jobs/job_2bcd0f899d41",
+  "files": {
+    "csrc/ops/add_rms_norm_dynamic_quant/CMakeLists.txt": "64bbdd514a7a6e94e599758f62110ad54f1afc6c2d783fa25592fe881eddbac0",
+    "csrc/ops/add_rms_norm_dynamic_quant/op_kernel/add_rms_norm_dynamic_quant_kernel.cpp": "5253dd95aad326d9db1e61dac26fd03727693af074b817c33551d3f3bc7ff875",
+    "csrc/ops/add_rms_norm_dynamic_quant/op_kernel/add_rms_norm_dynamic_quant_launch.h": "a818370b9682df9758e1aabd78b7f7a9844553369feb156b651bd98febf89aed",
+    "csrc/ops/add_rms_norm_dynamic_quant/op_plugin/add_rms_norm_dynamic_quant_plugin.cpp": "0910cd56e4739d778793aa81283f5b0f0d4059c1bef1bed293a4c6517ac0ddd1"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "operator_key": "gelu",
+  "operator_name": "Gelu",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_0596e8e5eb90",
+  "submission_id": "sub_6e74a42f2b20",
+  "score": 70.30553895757954,
+  "avg_speedup": 0.7884891169340832,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-18T11:40:47.711968",
+  "source_job_scaffold": "jobs/job_0596e8e5eb90",
+  "files": {
+    "csrc/ops/gelu/CMakeLists.txt": "2611d66ad5345cc85155a1c54110d3f86578ae88cc5704d3e7286f4520c81b65",
+    "csrc/ops/gelu/op_kernel/gelu_kernel.cpp": "b4d9a3ccbe1dcca5e50400d21dacaec61ff7ef4c2bc451f77e659debfa5c76bb",
+    "csrc/ops/gelu/op_kernel/gelu_kernel_bf16fp16.cpp": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "csrc/ops/gelu/op_kernel/gelu_launch.h": "6dd99c7b2ed723490f6a6e8f0cb9974611ba0374e8642fee322096e8405e905b",
+    "csrc/ops/gelu/op_plugin/gelu_plugin.cpp": "d7f6aa1a4b0ec8e708c465fe04bb422207cff83ffa5363e21cc952bdefeabe55"
+  }
+}

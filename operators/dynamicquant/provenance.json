@@ -1,0 +1,19 @@
+{
+  "operator_key": "dynamicquant",
+  "operator_name": "DynamicQuant",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_a8ed2ca8e06d",
+  "submission_id": "sub_c626db7a1f88",
+  "score": 76.86568825069388,
+  "avg_speedup": 1.1829802271792509,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-24T11:31:57.732034",
+  "source_job_scaffold": "jobs/job_a8ed2ca8e06d",
+  "files": {
+    "csrc/ops/dynamic_quant/CMakeLists.txt": "bbbf0b612f18dcd7eea0638211f2a73b2a0f34397551d7f59cc6a76d925309f4",
+    "csrc/ops/dynamic_quant/op_kernel/dynamic_quant_kernel.cpp": "cb7dac8cfaa69c8fea66ea0b5b820e0fffc05dcde4d05de4c681fdb9a58a8110",
+    "csrc/ops/dynamic_quant/op_kernel/dynamic_quant_launch.h": "7c08b129e1d2b33e830a83d0cd1f624f776332f4dc9562a4438e60cbf26bace2",
+    "csrc/ops/dynamic_quant/op_plugin/dynamic_quant_plugin.cpp": "8e279683c41eb363e68b87440065fcc6de03722a45f331e1c24db3060e600cc5"
+  }
+}

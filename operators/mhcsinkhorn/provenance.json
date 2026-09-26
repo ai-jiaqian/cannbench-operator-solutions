@@ -1,0 +1,21 @@
+{
+  "operator_key": "mhcsinkhorn",
+  "operator_name": "MhcSinkhorn",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_2bcd0f899d41",
+  "submission_id": "sub_62f16b03d2f8",
+  "score": 74.7482880214087,
+  "avg_speedup": 1.0454922419545496,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-20T09:54:03.085283",
+  "source_job_scaffold": "jobs/job_2bcd0f899d41",
+  "files": {
+    "csrc/ops/mhc_sinkhorn/CMakeLists.txt": "299571639ea2cbd01f55180e5580d386fca3269528b3ddb70102f62404d0fc4f",
+    "csrc/ops/mhc_sinkhorn/op_kernel/mhc_diag.h": "bef5f7abec53bdc45dc100fb3ee6fee35315b5834ed1f49e03676227f4309254",
+    "csrc/ops/mhc_sinkhorn/op_kernel/mhc_helpers.h": "97587e59479c17177a9982c331638017c2f6cf0731e845e49822d29b244bd899",
+    "csrc/ops/mhc_sinkhorn/op_kernel/mhc_sinkhorn_kernel.cpp": "6595ee71f4e4a839d196ad1f1d5c7f1edd64ef774cb94e705991ce3846e82983",
+    "csrc/ops/mhc_sinkhorn/op_kernel/mhc_sinkhorn_launch.h": "1520da3a164a613c56a047512055be08d2cd906ba86655c09d3a8c1390150577",
+    "csrc/ops/mhc_sinkhorn/op_plugin/mhc_sinkhorn_plugin.cpp": "9a313ffeafaed37352996faa2517c8fa3ac38a622560424c2ed8a7c2463a49a6"
+  }
+}

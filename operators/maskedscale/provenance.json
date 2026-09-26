@@ -1,0 +1,19 @@
+{
+  "operator_key": "maskedscale",
+  "operator_name": "MaskedScale",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_8f5da2aed6c0",
+  "submission_id": "sub_517e41b83a43",
+  "score": 87.90501563053624,
+  "avg_speedup": 2.286221170645222,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-23T21:35:08.989943",
+  "source_job_scaffold": "jobs/job_8f5da2aed6c0",
+  "files": {
+    "csrc/ops/masked_scale/CMakeLists.txt": "f2d7706ad3ddcc1baf5e5f5fa1d13d13b4074f8b438d88919d7c66648902667a",
+    "csrc/ops/masked_scale/op_kernel/masked_scale_kernel.cpp": "c8681f247c9cd5f6ff0db964e70fdf4ee2f034aec1670e92d72fe3500eb92c8a",
+    "csrc/ops/masked_scale/op_kernel/masked_scale_launch.h": "44ae09b772f6a60560fceb6026782706a8d2c0e8a83d30587baec200d3ebc970",
+    "csrc/ops/masked_scale/op_plugin/masked_scale_plugin.cpp": "ae6e458bc4ccf244cb307d45904138c292e8734c8aa93872b24ae4b4f7611910"
+  }
+}

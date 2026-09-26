@@ -1,0 +1,19 @@
+{
+  "operator_key": "conv3dbackpropfilter",
+  "operator_name": "Conv3DBackpropFilter",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_bf895f9a1c66",
+  "submission_id": "sub_f0506c41da94",
+  "score": 51.739405550591414,
+  "avg_speedup": 0.07247405011172509,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-24T01:57:03.817608",
+  "source_job_scaffold": "jobs/job_bf895f9a1c66",
+  "files": {
+    "csrc/ops/conv_3d_backprop_filter/CMakeLists.txt": "356afa37dfcfe394dbca11c0e9918625bb01e6a100ec7219b8d01a4184a6cb9e",
+    "csrc/ops/conv_3d_backprop_filter/op_kernel/conv_3d_bpf_kernel.cpp": "883b2bd3090a22d2fac077d2904348f0ab2001e14fbdab30ddd72a5d1c81ab0b",
+    "csrc/ops/conv_3d_backprop_filter/op_kernel/conv_3d_bpf_launch.h": "4a77724853d625aa9293797bb738df901808fd0622f5a3c744c89e59519bb4a1",
+    "csrc/ops/conv_3d_backprop_filter/op_plugin/conv_3d_bpf_plugin.cpp": "99950577eee5b1ad6f580a522305c6b8d47e4475c983783e1a712375402684ad"
+  }
+}

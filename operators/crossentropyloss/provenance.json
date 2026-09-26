@@ -1,0 +1,19 @@
+{
+  "operator_key": "crossentropyloss",
+  "operator_name": "CrossEntropyLoss",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_332127342253",
+  "submission_id": "sub_2a35aae35d8c",
+  "score": 72.39890544617633,
+  "avg_speedup": 0.923652007553091,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-23T23:51:42.322032",
+  "source_job_scaffold": "jobs/job_332127342253",
+  "files": {
+    "csrc/ops/cross_entropy_loss/CMakeLists.txt": "bf6358e71e8da241eb8aa96723e7f214723ed326d78ae722b9f82aebcc842e22",
+    "csrc/ops/cross_entropy_loss/op_kernel/ce_kernel.cpp": "26cbf545aaf30fdb033baa4330a5e9102c0a8ab6bb6b876cff0ec70dc1231fe4",
+    "csrc/ops/cross_entropy_loss/op_kernel/ce_launch.h": "904691b9b08cf045f4fe7aaa5846efcc0973012a9a306a03765188e252de221a",
+    "csrc/ops/cross_entropy_loss/op_plugin/ce_plugin.cpp": "51343d9058daa6b4acfcf24695a2df283d5c8e5b7e2784df96c8ded07dd8b71c"
+  }
+}

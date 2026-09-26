@@ -1,0 +1,19 @@
+{
+  "operator_key": "groupnorm",
+  "operator_name": "GroupNorm",
+  "benchmark_version": "1.1.1",
+  "job_id": "job_d98236aa8f09",
+  "submission_id": "sub_c39a9ba19ff2",
+  "score": 72.35967859827527,
+  "avg_speedup": 0.9689532670110144,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-04T00:24:42.238360",
+  "source_job_scaffold": "jobs/job_d98236aa8f09",
+  "files": {
+    "csrc/ops/group_norm/CMakeLists.txt": "60fefd84c5e9beda5c365584ad6ca74c77454c98a0faf92b16dac93f632dab7f",
+    "csrc/ops/group_norm/op_kernel/group_norm_kernel.cpp": "cb3d862e6c6d3d3dee693b2d494f2ad020c9b472f6a7036da3193cd7cb172086",
+    "csrc/ops/group_norm/op_kernel/group_norm_launch.h": "5cd290c889055f63a55be66ad50d8d3c181fdd597a2ef8af5f3fbd4601d81633",
+    "csrc/ops/group_norm/op_plugin/group_norm_plugin.cpp": "eb6c9aca3db579b2863a49b54d9653a9647c9b532bad598d3ff4d155f80f71fe"
+  }
+}

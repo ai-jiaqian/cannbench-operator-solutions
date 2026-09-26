@@ -1,0 +1,19 @@
+{
+  "operator_key": "gridsampler3d",
+  "operator_name": "GridSampler3D",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_1a60b247be41",
+  "submission_id": "sub_c50832106845",
+  "score": 56.29612221566881,
+  "avg_speedup": 0.1691359986609447,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-23T23:58:37.350551",
+  "source_job_scaffold": "jobs/job_1a60b247be41",
+  "files": {
+    "csrc/ops/grid_sampler_3d/CMakeLists.txt": "b9446f63615b6b3118979df2738196c4253d25e644b8aeca1e76cd51d72aefd5",
+    "csrc/ops/grid_sampler_3d/op_kernel/grid_sampler_3d_kernel.cpp": "5300ae35859e42ac5e3320c2155262d2c3043042421cdedfd84276a52eba25ff",
+    "csrc/ops/grid_sampler_3d/op_kernel/grid_sampler_3d_launch.h": "ee32f39b3d293f8b3f775e16afed9ffe9c6ffab3958a742fd1be62687556c061",
+    "csrc/ops/grid_sampler_3d/op_plugin/grid_sampler_3d_plugin.cpp": "b2cff8e4a9e3abd5713bcd519773c8c35af6b175eff773ffdf26e461a6f9faca"
+  }
+}

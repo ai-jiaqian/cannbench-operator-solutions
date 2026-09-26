@@ -1,0 +1,19 @@
+{
+  "operator_key": "maximum",
+  "operator_name": "Maximum",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_2bcd0f899d41",
+  "submission_id": "sub_62f16b03d2f8",
+  "score": 78.4655343039922,
+  "avg_speedup": 1.364683071621538,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-20T09:54:03.085283",
+  "source_job_scaffold": "jobs/job_2bcd0f899d41",
+  "files": {
+    "csrc/ops/maximum/CMakeLists.txt": "06af2864cb2bfa4e7f612b01aba7810d39a34fab7ee14addc7a57952662ff6dd",
+    "csrc/ops/maximum/op_kernel/maximum_kernel.cpp": "4fcdd2dc3820c65814fd8638af50bb2bbee068dd0500a5c0cb0cf8f4386289f9",
+    "csrc/ops/maximum/op_kernel/maximum_launch.h": "758474727b0d73514a93fe32f7985b0ff1f7f90e583ffdedc0d426b2a3b5d796",
+    "csrc/ops/maximum/op_plugin/maximum_plugin.cpp": "2e51e9eda7e903279d90cc8f1e48474e948ac424db79d204fbafa9ea43a7245b"
+  }
+}

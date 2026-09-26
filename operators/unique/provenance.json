@@ -1,0 +1,19 @@
+{
+  "operator_key": "unique",
+  "operator_name": "Unique",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_7e94c4b5a0ce",
+  "submission_id": "sub_132ce4bb58c9",
+  "score": 0.0,
+  "avg_speedup": 0.01908586239425752,
+  "passed_cases": 15,
+  "total_cases": 20,
+  "updated_at": "2026-09-21T10:29:57.115445",
+  "source_job_scaffold": "jobs/job_7e94c4b5a0ce",
+  "files": {
+    "csrc/ops/unique/CMakeLists.txt": "c82b35fdbf6df112c98b530a4d5cf7819e4014611394f28c8ca83dd6f0d7d118",
+    "csrc/ops/unique/op_kernel/unique_kernel.cpp": "7d86e52a3a911e236f553ff3877ba581222f1b99d7f44f81624359fc3d70ebbb",
+    "csrc/ops/unique/op_kernel/unique_launch.h": "6b0ce40466ad37bcb788ace0edd8cfd5034a52cb46cfba677443ca034e7609a6",
+    "csrc/ops/unique/op_plugin/unique_plugin.cpp": "39bf763ef0a4a3fb2c3df83500b8260f3262ef665a16da65d3384e55a48ce1d0"
+  }
+}

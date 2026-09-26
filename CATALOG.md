@@ -1,0 +1,59 @@
+# Current official public components
+
+Source: [CANNBench solution](https://cannbench.com/leaderboard). Scores and pass counts are official public-case results for the named Job. Benchmark versions are shown per operator.
+
+| Operator | Version | Public cases | Score | Source Job |
+| --- | --- | ---: | ---: | --- |
+| [AdaptiveAvgPool3D](operators/adaptiveavgpool3d/) | 1.1.2 | 20/20 | 76.524830 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [AddRmsNormDynamicQuant](operators/addrmsnormdynamicquant/) | 1.1.2 | 20/20 | 76.301205 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [ApplyAdamW](operators/applyadamw/) | 1.1.2 | 20/20 | 86.435303 | [job_0c47cac62dbd](https://cannbench.com/jobs/job_0c47cac62dbd) |
+| [ApplyRotaryPosEmb](operators/applyrotaryposemb/) | 1.1.2 | 20/20 | 75.598715 | [job_e774c38307d7](https://cannbench.com/jobs/job_e774c38307d7) |
+| [ArgMax](operators/argmax/) | 1.1.2 | 20/20 | 77.731947 | [job_9c2a91ed3c14](https://cannbench.com/jobs/job_9c2a91ed3c14) |
+| [Conv2D](operators/conv2d/) | 1.1.2 | 20/20 | 51.698157 | [job_a98a3d915037](https://cannbench.com/jobs/job_a98a3d915037) |
+| [Conv3DBackpropFilter](operators/conv3dbackpropfilter/) | 1.1.2 | 20/20 | 51.739406 | [job_bf895f9a1c66](https://cannbench.com/jobs/job_bf895f9a1c66) |
+| [CrossEntropyLoss](operators/crossentropyloss/) | 1.1.2 | 20/20 | 72.398905 | [job_332127342253](https://cannbench.com/jobs/job_332127342253) |
+| [Cummin](operators/cummin/) | 1.1.2 | 20/20 | 59.686449 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [DepthwiseConv2D](operators/depthwiseconv2d/) | 1.1.2 | 20/20 | 68.541765 | [job_65fa5b855304](https://cannbench.com/jobs/job_65fa5b855304) |
+| [DequantSwigluQuant](operators/dequantswigluquant/) | 1.1.2 | 20/20 | 74.860601 | [job_426bfd3f1f36](https://cannbench.com/jobs/job_426bfd3f1f36) |
+| [Dilation2D](operators/dilation2d/) | 1.1.2 | 20/20 | 70.229628 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [DynamicQuant](operators/dynamicquant/) | 1.1.2 | 20/20 | 76.865688 | [job_a8ed2ca8e06d](https://cannbench.com/jobs/job_a8ed2ca8e06d) |
+| [EngramGateFusion](operators/engramgatefusion/) | 1.1.2 | 20/20 | 64.727946 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [Exp](operators/exp/) | 1.1.2 | 20/20 | 86.836271 | [job_6d4250ef548d](https://cannbench.com/jobs/job_6d4250ef548d) |
+| [ForeachAddcdivScalar](operators/foreachaddcdivscalar/) | 1.1.2 | 20/20 | 84.161886 | [job_c0d8fbf4c338](https://cannbench.com/jobs/job_c0d8fbf4c338) |
+| [ForeachNorm](operators/foreachnorm/) | 1.1.2 | 20/20 | 82.943371 | [job_a405e8442309](https://cannbench.com/jobs/job_a405e8442309) |
+| [Gather](operators/gather/) | 1.1.2 | 20/20 | 75.322447 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [Gcd](operators/gcd/) | 1.1.2 | 20/20 | 80.730726 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [Gelu](operators/gelu/) | 1.1.2 | 20/20 | 70.305539 | [job_0596e8e5eb90](https://cannbench.com/jobs/job_0596e8e5eb90) |
+| [GQA](operators/gqa/) | 1.1.2 | 20/20 | 59.596919 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [GridSampler3D](operators/gridsampler3d/) | 1.1.2 | 20/20 | 56.296122 | [job_1a60b247be41](https://cannbench.com/jobs/job_1a60b247be41) |
+| [GroupedMatmul](operators/groupedmatmul/) | 1.1.2 | 20/20 | 75.188046 | [job_ff4ade8ff90b](https://cannbench.com/jobs/job_ff4ade8ff90b) |
+| [GroupedMatmulSwigluQuant](operators/groupedmatmulswigluquant/) | 1.1.2 | 20/20 | 79.310145 | [job_fa17c7ca9b5f](https://cannbench.com/jobs/job_fa17c7ca9b5f) |
+| [GroupNorm](operators/groupnorm/) | 1.1.1 | 20/20 | 72.359679 | [job_d98236aa8f09](https://cannbench.com/jobs/job_d98236aa8f09) |
+| [GRU](operators/gru/) | 1.1.2 | 20/20 | 55.110256 | [job_b9c109980bd6](https://cannbench.com/jobs/job_b9c109980bd6) |
+| [LSTM](operators/lstm/) | 1.1.2 | 20/20 | 55.385741 | [job_9ff45fdb230e](https://cannbench.com/jobs/job_9ff45fdb230e) |
+| [MaskedScale](operators/maskedscale/) | 1.1.2 | 20/20 | 87.905016 | [job_8f5da2aed6c0](https://cannbench.com/jobs/job_8f5da2aed6c0) |
+| [Maximum](operators/maximum/) | 1.1.2 | 20/20 | 78.465534 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [MHA](operators/mha/) | 1.1.2 | 20/20 | 60.424611 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [MhcSinkhorn](operators/mhcsinkhorn/) | 1.1.2 | 20/20 | 74.748288 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [Mish](operators/mish/) | 1.1.2 | 20/20 | 86.790173 | [job_8f5da2aed6c0](https://cannbench.com/jobs/job_8f5da2aed6c0) |
+| [MLA](operators/mla/) | 1.1.2 | 20/20 | 66.085011 | [job_e2005e05b297](https://cannbench.com/jobs/job_e2005e05b297) |
+| [MlaProlog](operators/mlaprolog/) | 1.1.2 | 20/20 | 65.430314 | [job_2f7ae99d2cf0](https://cannbench.com/jobs/job_2f7ae99d2cf0) |
+| [MoeFinalizeRouting](operators/moefinalizerouting/) | 1.1.2 | 20/20 | 74.935979 | [job_32cb689685d0](https://cannbench.com/jobs/job_32cb689685d0) |
+| [MoeGatingTopKSoftmax](operators/moegatingtopksoftmax/) | 1.1.2 | 20/20 | 67.975258 | [job_ee772e520b94](https://cannbench.com/jobs/job_ee772e520b94) |
+| [MoeReRouting](operators/moererouting/) | 1.1.2 | 20/20 | 79.713224 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [NMS](operators/nms/) | 1.1.2 | 1/20 | 2.519760 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [QuantMatmul](operators/quantmatmul/) | 1.1.2 | 20/20 | 65.036068 | [job_e74a12b58dfb](https://cannbench.com/jobs/job_e74a12b58dfb) |
+| [ResizeBilinear](operators/resizebilinear/) | 1.1.2 | 20/20 | 85.919733 | [job_d31a04007a33](https://cannbench.com/jobs/job_d31a04007a33) |
+| [RmsNorm](operators/rmsnorm/) | 1.1.2 | 20/20 | 78.314964 | [job_5a8dbd34f4ed](https://cannbench.com/jobs/job_5a8dbd34f4ed) |
+| [ROIAlign](operators/roialign/) | 1.1.2 | 20/20 | 59.790171 | [job_9d7d5410179b](https://cannbench.com/jobs/job_9d7d5410179b) |
+| [Scatter](operators/scatter/) | 1.1.2 | 20/20 | 60.862299 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [Sigmoid](operators/sigmoid/) | 1.1.2 | 20/20 | 73.037247 | [job_430849cb00ba](https://cannbench.com/jobs/job_430849cb00ba) |
+| [Softmax](operators/softmax/) | 1.1.2 | 20/20 | 77.382683 | [job_d6a5240d0bd9](https://cannbench.com/jobs/job_d6a5240d0bd9) |
+| [SparseFlashAttention](operators/sparseflashattention/) | 1.1.2 | 20/20 | 55.036517 | [job_875f3de90943](https://cannbench.com/jobs/job_875f3de90943) |
+| [StridedSlice](operators/stridedslice/) | 1.1.2 | 20/20 | 83.647022 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [SwiGlu](operators/swiglu/) | 1.1.1 | 20/20 | 81.971313 | [job_26536843a4af](https://cannbench.com/jobs/job_26536843a4af) |
+| [TopK](operators/topk/) | 1.1.2 | 20/20 | 59.708384 | [job_7fcd35ccf2ca](https://cannbench.com/jobs/job_7fcd35ccf2ca) |
+| [Transpose](operators/transpose/) | 1.1.2 | 20/20 | 71.684887 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
+| [Unique](operators/unique/) | 1.1.2 | 15/20 | 0.000000 | [job_7e94c4b5a0ce](https://cannbench.com/jobs/job_7e94c4b5a0ce) |
+| [UnsortedSegmentSum](operators/unsortedsegmentsum/) | 1.1.2 | 20/20 | 74.171701 | [job_bca25b1a58b3](https://cannbench.com/jobs/job_bca25b1a58b3) |
+| [WeightQuantBatchMatmul](operators/weightquantbatchmatmul/) | 1.1.2 | 20/20 | 64.903397 | [job_dd14f002f64f](https://cannbench.com/jobs/job_dd14f002f64f) |

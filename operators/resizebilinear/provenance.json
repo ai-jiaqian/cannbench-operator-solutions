@@ -1,0 +1,19 @@
+{
+  "operator_key": "resizebilinear",
+  "operator_name": "ResizeBilinear",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_d31a04007a33",
+  "submission_id": "sub_1ee26388af84",
+  "score": 85.91973271039949,
+  "avg_speedup": 2.6559325093568082,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-24T22:26:02.008555",
+  "source_job_scaffold": "jobs/job_d31a04007a33",
+  "files": {
+    "csrc/ops/resize_bilinear/CMakeLists.txt": "ae8943d7788f6851351ed69fcd4199142b3856d10cce3fe9c1e8421363a8f560",
+    "csrc/ops/resize_bilinear/op_kernel/resize_bilinear_kernel.cpp": "14cba7e5b436f8dc738d83cefbef858ad150b79bf2172508d8e2af5dc625abd6",
+    "csrc/ops/resize_bilinear/op_kernel/resize_bilinear_launch.h": "5fdfeef05c890a4400c286be2eac8047c1577149a27d35758b6b55bfd97cfd14",
+    "csrc/ops/resize_bilinear/op_plugin/resize_bilinear_plugin.cpp": "0c896bd7c6621ba21de5c0e275ffe749d063596d5fe7b52bf0d5389ce065c1b6"
+  }
+}

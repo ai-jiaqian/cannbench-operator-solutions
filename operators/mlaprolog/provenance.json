@@ -1,0 +1,21 @@
+{
+  "operator_key": "mlaprolog",
+  "operator_name": "MlaProlog",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_2f7ae99d2cf0",
+  "submission_id": "sub_5f82d8fd375f",
+  "score": 65.43031441552121,
+  "avg_speedup": 0.9069594627604362,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-23T17:53:57.836630",
+  "source_job_scaffold": "jobs/job_2f7ae99d2cf0",
+  "files": {
+    "csrc/ops/mla_prolog/CMakeLists.txt": "9f715d7ee0c791b47a979c03c087aeb2e006d8d00ddaa1f4ff2e247e90b3d2d8",
+    "csrc/ops/mla_prolog/op_kernel/mla_prolog_launch.h": "45992c6da7b223be28788c5e001329010d208879cdbfb0ec0bd7081984bb5829",
+    "csrc/ops/mla_prolog/op_kernel/mla_prolog_mm.cpp": "644c5bfd35aaa08d0aeb42ced507b8ed48c9a43a2dac730ce5097ca3533c5fc3",
+    "csrc/ops/mla_prolog/op_kernel/mla_prolog_tiling.cpp": "3a85247fdd4516a476fb6b9d726a92088422437253ce926beac58193867e02db",
+    "csrc/ops/mla_prolog/op_kernel/mla_prolog_vec.cpp": "9ee11fc9c7d832cde731bee0a91be40dec31c3995b40ded8831d7aacb9c3242b",
+    "csrc/ops/mla_prolog/op_plugin/mla_prolog_plugin.cpp": "8effae183cd4c4c8fec619c9eb81f2fdb60962cbe56bb8e30cbdc6e9acd9c188"
+  }
+}

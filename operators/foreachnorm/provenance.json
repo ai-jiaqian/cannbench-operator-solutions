@@ -1,0 +1,19 @@
+{
+  "operator_key": "foreachnorm",
+  "operator_name": "ForeachNorm",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_a405e8442309",
+  "submission_id": "sub_bb6bfb5f9c31",
+  "score": 82.94337088830412,
+  "avg_speedup": 1.7667285052682988,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-24T20:46:12.579001",
+  "source_job_scaffold": "jobs/job_a405e8442309",
+  "files": {
+    "csrc/ops/foreach_norm/CMakeLists.txt": "7f50214ef39d6dbf9bef4774e80efa99f53a422ebca20a453c1a3c1ac79753ec",
+    "csrc/ops/foreach_norm/op_kernel/foreach_norm_kernel.cpp": "bb1a0dec4d06ca4b147c4e35e1f236c20ee13b023f82d8710288f04f9f68628a",
+    "csrc/ops/foreach_norm/op_kernel/foreach_norm_launch.h": "72ed1f73fabc55a590141cf6134228ed8b98a2f9547da33f1a23c42c6ee9bb93",
+    "csrc/ops/foreach_norm/op_plugin/foreach_norm_plugin.cpp": "5c82d6ec7836521464cc49f694085200a1754488298c8874940146cf32a75bd1"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "operator_key": "conv2d",
+  "operator_name": "Conv2D",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_a98a3d915037",
+  "submission_id": "sub_39292c2fd7a9",
+  "score": 51.69815719499815,
+  "avg_speedup": 0.04758437231166248,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-23T14:30:12.735866",
+  "source_job_scaffold": "jobs/job_a98a3d915037",
+  "files": {
+    "csrc/ops/conv2d/CMakeLists.txt": "c666322169bce0b0805b3c736bb68d1a1ab434da667029b9a77d59bb1d2e975f",
+    "csrc/ops/conv2d/op_kernel/conv2d_kernel.cpp": "8d16c64e99104045e44eefd87ef323700094057a564c3424e9a4cc1744559eea",
+    "csrc/ops/conv2d/op_kernel/conv2d_launch.h": "5d263a9fed2ef558467d5256c68db51ddbfbb53484c0de0d547eb4bb3b30d076",
+    "csrc/ops/conv2d/op_plugin/conv2d_plugin.cpp": "eb192edd84bb12fa92dd2c3eb80e9a52c04600dbfc44ac17479397895335bb1c"
+  }
+}

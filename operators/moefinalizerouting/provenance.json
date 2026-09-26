@@ -1,0 +1,19 @@
+{
+  "operator_key": "moefinalizerouting",
+  "operator_name": "MoeFinalizeRouting",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_32cb689685d0",
+  "submission_id": "sub_a918dd2339bb",
+  "score": 74.93597868585806,
+  "avg_speedup": 1.0749124914490025,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-24T14:12:37.022119",
+  "source_job_scaffold": "jobs/job_32cb689685d0",
+  "files": {
+    "csrc/ops/moe_finalize_routing/CMakeLists.txt": "a209c98f97afa0bc4192c87d7055328184ec158eee6fca2a4befa05061987fc4",
+    "csrc/ops/moe_finalize_routing/op_kernel/moe_finalize_routing_kernel.cpp": "00614067c09143a9d099850b08e0d8ad48acabeeab67a8ff683ec59c67955432",
+    "csrc/ops/moe_finalize_routing/op_kernel/moe_finalize_routing_launch.h": "4140b3ec045de976a35b8647101d063279844f6e788a5e5644c329f63b978953",
+    "csrc/ops/moe_finalize_routing/op_plugin/moe_finalize_routing_plugin.cpp": "176b8193fe96c47561d4b271012fe00f9d301924be3fb4b6e775dcca0e107acc"
+  }
+}

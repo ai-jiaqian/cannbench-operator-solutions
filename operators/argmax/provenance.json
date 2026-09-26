@@ -1,0 +1,19 @@
+{
+  "operator_key": "argmax",
+  "operator_name": "ArgMax",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_9c2a91ed3c14",
+  "submission_id": "sub_24a96dfd6115",
+  "score": 77.73194664708538,
+  "avg_speedup": 1.626476911101605,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-23T22:42:43.362351",
+  "source_job_scaffold": "jobs/job_9c2a91ed3c14",
+  "files": {
+    "csrc/ops/arg_max/CMakeLists.txt": "313be9a65a1fadb2322d536ffe5ed15046f575edd8db33cb2da810de8ff7f94a",
+    "csrc/ops/arg_max/op_kernel/arg_max_kernel.cpp": "e7573a726f0ddce0f82ed99c739e37bd0d5ad131b2445967a6af491ae39984e2",
+    "csrc/ops/arg_max/op_kernel/arg_max_launch.h": "c649d4fd2f780b07bca54aac1d4549bafcdb6a8af4e00aeb6aee52588ffb18ed",
+    "csrc/ops/arg_max/op_plugin/arg_max_plugin.cpp": "4066aaeb0844e42512557a2031fbfa0d48d1a3a6ef2985571b8621ab35b032aa"
+  }
+}

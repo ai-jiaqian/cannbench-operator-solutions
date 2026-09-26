@@ -1,0 +1,20 @@
+{
+  "operator_key": "quantmatmul",
+  "operator_name": "QuantMatmul",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_e74a12b58dfb",
+  "submission_id": "sub_9b69c8156d59",
+  "score": 65.03606812511866,
+  "avg_speedup": 0.5882438542331656,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-23T15:23:56.450176",
+  "source_job_scaffold": "jobs/job_e74a12b58dfb",
+  "files": {
+    "csrc/ops/quant_matmul/CMakeLists.txt": "80809e37ea5d0a9aa60310d866c5abb84289a19f1d032ffc984d4e48b99e02e7",
+    "csrc/ops/quant_matmul/op_kernel/quant_matmul_cube_kernel.cpp": "47a553eb3bce4c7e4b631de56c4282e79f3cd7f2b531c8d834f2f56621e11df7",
+    "csrc/ops/quant_matmul/op_kernel/quant_matmul_epilogue_kernel.cpp": "b34cbc0a47c9ebd250fc124e93032f701560df77b00fcc32cffea31ab8653dc1",
+    "csrc/ops/quant_matmul/op_kernel/quant_matmul_launch.h": "ea212adfd70311e60ade00ffb3f4cbb88d5f7af7760c0e11bfa4d3cfa3f1e297",
+    "csrc/ops/quant_matmul/op_plugin/quant_matmul_plugin.cpp": "9efdfb38eecd487e1e49cb4b68c22bd3a06ab706febe8d1f68021bf73700ea7e"
+  }
+}

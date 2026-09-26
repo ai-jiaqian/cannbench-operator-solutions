@@ -1,0 +1,20 @@
+{
+  "job_id": "job_6d4250ef548d",
+  "official_submission_zip_sha256": "118462f46c1f1f93c3fc721280927b0d43cdcd2f9d4349d39eb3df942d7501a1",
+  "files": {
+    "CMakeLists.txt": "0dc56de424e2a4b5e851e3323061ead73d3cfe6af5cdf9b41effcd729231d858",
+    "build.sh": "c7b49b94f20adc5e0a7a997bc9a46257bbf4f04fa2313fb04a0312674a078b47",
+    "cann_bench/__init__.py": "bf6f713b20e6ed9915be8ac2a68de197f54dc49b9203bac8cada051eca37fb63",
+    "cmake/ascend.cmake": "2ccbc8c81b0290bf982ef86e6aeaf472dd7a3adf622772c23572f071b8f271de",
+    "cmake/func.cmake": "2c55a1d0a95e47b60799954766ef849545da3db905b297640b59e78796104011",
+    "cmake/python.cmake": "715b9ca4aaec728e54e8ea54b10aa331083b279a683e84c217e5f5919ee8eae1",
+    "cmake/torch.cmake": "e1b24715f328d93fa0a02d1a3cb27ffcbca775ff700f994a35fd4449c68043d9",
+    "cmake/torch_npu.cmake": "c78af6f8a762c3f2b4396481774bc292277b135d1d7afd05c5e584b7f6ffc6c5",
+    "csrc/CMakeLists.txt": "7db466ca05a2673961bf6d8ea9f8cf0465fc829474c19343d2402aed37dd4b37",
+    "csrc/extension.cpp": "23a2f6dfb1eaa3d6ac323a403be7c17bec9cd24767290efda7d985f36f946064",
+    "csrc/ops/CMakeLists.txt": "9fb8f9d31e5c2108336ff9962c3050b2b0008dff7e01b9ed2e2139c7ed30c63d",
+    "requirements.txt": "d28a28569644878623169b155cbebe7f41cae9102cfcbb49b677a3a9c63ff006",
+    "scripts/build_wheel.sh": "c3e6cfaa970c83a047cf823107d1d7450f4f313d33b289e7a30d8896c311ac93",
+    "setup.py": "9264f661d971c2da25ee5aedf3b474689289fee51abeb436f17407e85deeea1a"
+  }
+}

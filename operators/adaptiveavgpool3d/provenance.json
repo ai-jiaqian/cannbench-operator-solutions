@@ -1,0 +1,19 @@
+{
+  "operator_key": "adaptiveavgpool3d",
+  "operator_name": "AdaptiveAvgPool3D",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_2bcd0f899d41",
+  "submission_id": "sub_62f16b03d2f8",
+  "score": 76.52482986971535,
+  "avg_speedup": 1.5105420153287865,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-20T09:54:03.085283",
+  "source_job_scaffold": "jobs/job_2bcd0f899d41",
+  "files": {
+    "csrc/ops/adaptive_avg_pool_3d/CMakeLists.txt": "7391fb7b1df3dfb624b4e206b2b7cf133bf2ac5d28bcd56f6c94786b0cefa4f4",
+    "csrc/ops/adaptive_avg_pool_3d/op_kernel/adaptive_avg_pool_3d_kernel.cpp": "3da2d4a54aa0d18a247106fec98a20da62c6c1c29b8af662ad7ce279fd9c4c06",
+    "csrc/ops/adaptive_avg_pool_3d/op_kernel/adaptive_avg_pool_3d_launch.h": "1940b715a7a29d550686a94b51808dc05574354bc99e21454a6cc541f141453d",
+    "csrc/ops/adaptive_avg_pool_3d/op_plugin/adaptive_avg_pool_3d_plugin.cpp": "ae8b900323b4b66add7f910370bcdbb54885be7d040f1595872e83c963dc9460"
+  }
+}

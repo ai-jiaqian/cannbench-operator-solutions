@@ -1,0 +1,19 @@
+{
+  "operator_key": "engramgatefusion",
+  "operator_name": "EngramGateFusion",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_2bcd0f899d41",
+  "submission_id": "sub_62f16b03d2f8",
+  "score": 64.72794588402152,
+  "avg_speedup": 0.4594011873132574,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-20T09:54:03.085283",
+  "source_job_scaffold": "jobs/job_2bcd0f899d41",
+  "files": {
+    "csrc/ops/engram_gate_fusion/CMakeLists.txt": "487889672affb1d436eac499520b1c52896ac66887c78e5bc61c187402e08c7a",
+    "csrc/ops/engram_gate_fusion/op_kernel/engram_kernel.cpp": "7bbbe0010b41bc3c9fd92ee6e9c228f40833f16b28c15a28682faef461893c46",
+    "csrc/ops/engram_gate_fusion/op_kernel/engram_launch.h": "5f034e470870cd14f65332d5dc7db7372a1a4610c21cc9a72e05a002d1c3798b",
+    "csrc/ops/engram_gate_fusion/op_plugin/engram_plugin.cpp": "baa4e046dea31f965ac519f87dd467d8036b19dc26e3dc8bdda6cbbaf15c556a"
+  }
+}

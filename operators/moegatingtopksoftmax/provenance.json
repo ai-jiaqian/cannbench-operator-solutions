@@ -1,0 +1,19 @@
+{
+  "operator_key": "moegatingtopksoftmax",
+  "operator_name": "MoeGatingTopKSoftmax",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_ee772e520b94",
+  "submission_id": "sub_520bded02351",
+  "score": 67.9752579636246,
+  "avg_speedup": 0.6260812967559128,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-22T10:25:20.778739",
+  "source_job_scaffold": "jobs/job_ee772e520b94",
+  "files": {
+    "csrc/ops/moe_gating_top_k_softmax/CMakeLists.txt": "341f732b7d95537c495a62ae334afca0da84aca955f55c3eb7436203f03ed5b3",
+    "csrc/ops/moe_gating_top_k_softmax/op_kernel/moe_gating_kernel.cpp": "e971f5cc5910c739053dcc2409a9bebc2a4d432b333c783b2ae3bbd8e2a2ecad",
+    "csrc/ops/moe_gating_top_k_softmax/op_kernel/moe_gating_launch.h": "b4f82aec40c19cddd3dbb12b5aa9304503ec9f37ba424dae7ea53165622ef41e",
+    "csrc/ops/moe_gating_top_k_softmax/op_plugin/moe_gating_plugin.cpp": "c623d38f1a30f0e3fcc062aff1085256c31b677fb6b20ee3d360b9566e3fd6a2"
+  }
+}

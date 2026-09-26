@@ -1,0 +1,20 @@
+{
+  "operator_key": "nms",
+  "operator_name": "NMS",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_2bcd0f899d41",
+  "submission_id": "sub_62f16b03d2f8",
+  "score": 2.519759753221591,
+  "avg_speedup": 0.00884424949849205,
+  "passed_cases": 1,
+  "total_cases": 20,
+  "updated_at": "2026-09-20T09:54:03.085283",
+  "source_job_scaffold": "jobs/job_2bcd0f899d41",
+  "files": {
+    "csrc/ops/nms/CMakeLists.txt": "2826935d7e4abf06f124e33ead039979f637b65ed860c172dd93a601505f26f3",
+    "csrc/ops/nms/op_kernel/nms_kernel.cpp": "611e93068e82b6a929929a8f4482886539cf51aa3efe91e9e0060b16315d8d9a",
+    "csrc/ops/nms/op_kernel/nms_launch.h": "54fcd905dc455783346c0f2ac344530348ed47fbbbc947fb2a88d5c92daeab6d",
+    "csrc/ops/nms/op_kernel/nms_probe.h": "feda99bed1fe49d352cd715188acc964ad57de184aaf953bd4b92d391006e038",
+    "csrc/ops/nms/op_plugin/nms_plugin.cpp": "1375b8481c32cea2e400735ea7d2d8dbb80b88986db33fa239c41390b43e1c7f"
+  }
+}

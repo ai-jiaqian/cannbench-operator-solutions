@@ -1,0 +1,19 @@
+{
+  "operator_key": "swiglu",
+  "operator_name": "SwiGlu",
+  "benchmark_version": "1.1.1",
+  "job_id": "job_26536843a4af",
+  "submission_id": "sub_f83b21086de8",
+  "score": 81.97131345937362,
+  "avg_speedup": 1.795811868078878,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-02T00:09:38.564064",
+  "source_job_scaffold": "jobs/job_26536843a4af",
+  "files": {
+    "csrc/ops/swi_glu/CMakeLists.txt": "33bfe8c21dbac09062650a1c4248a733b359d1de332597c09a3fa2588ba877de",
+    "csrc/ops/swi_glu/op_kernel/swi_glu_kernel.cpp": "4ef4e0a6d0d4b6120fc91389bdb5337116367b655373b65994b5cd1c5a873d6d",
+    "csrc/ops/swi_glu/op_kernel/swi_glu_launch.h": "f06deeced6ed69bcf2acd5308693daa86d604a7b633b005af289598642c5683a",
+    "csrc/ops/swi_glu/op_plugin/swi_glu_plugin.cpp": "653d8655e150de4b08fd96dbdb260c6585df316be6f4299e59672e03791126c6"
+  }
+}

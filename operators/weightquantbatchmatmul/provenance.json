@@ -1,0 +1,23 @@
+{
+  "operator_key": "weightquantbatchmatmul",
+  "operator_name": "WeightQuantBatchMatmul",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_dd14f002f64f",
+  "submission_id": "sub_78ebb8975272",
+  "score": 64.9033965958788,
+  "avg_speedup": 0.5393687627454844,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-23T15:56:12.791620",
+  "source_job_scaffold": "jobs/job_dd14f002f64f",
+  "files": {
+    "csrc/ops/weight_quant_batch_matmul/CMakeLists.txt": "c648c8d6bb9c8e85e25012cf9f5742f0532db7fc4e144d8621d655bc419c37b1",
+    "csrc/ops/weight_quant_batch_matmul/op_kernel/wqmm_dequant.cpp": "f24caf210de8bcd1eaa256441fc1ed03052f76eb935fd0fdbb3ac18510ead50d",
+    "csrc/ops/weight_quant_batch_matmul/op_kernel/wqmm_host.cpp": "666227e53da82c48a38beb149bb56db7e03e2363ce26dfbd703d989bc6ba7486",
+    "csrc/ops/weight_quant_batch_matmul/op_kernel/wqmm_launch.h": "4d89f7df136aba2b5da5d8b190c8c36907ccc32c6d6488749d11339f760e5e1e",
+    "csrc/ops/weight_quant_batch_matmul/op_kernel/wqmm_mm.cpp": "a6056c921466faf50ac038b48e6df08e75d0971f8cf07c339f27837076c5358c",
+    "csrc/ops/weight_quant_batch_matmul/op_kernel/wqmm_qmm.cpp": "e5d94d6f406c2a4d191f14923b90aa1ee6ce3ad7fe6b808657ba2318adb4696e",
+    "csrc/ops/weight_quant_batch_matmul/op_kernel/wqmm_xfer.cpp": "e69f81170cd3d645e2be457438f54fee02077d645baa0845cb6a2de7224b79b2",
+    "csrc/ops/weight_quant_batch_matmul/op_plugin/wqmm_plugin.cpp": "f50b6e27e9de0dcdf5da6a35b725936a29447e49b1ce47c1befee5b35662c4cb"
+  }
+}

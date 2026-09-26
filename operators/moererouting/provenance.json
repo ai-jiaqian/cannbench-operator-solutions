@@ -1,0 +1,21 @@
+{
+  "operator_key": "moererouting",
+  "operator_name": "MoeReRouting",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_2bcd0f899d41",
+  "submission_id": "sub_62f16b03d2f8",
+  "score": 79.71322380549121,
+  "avg_speedup": 1.3339242267327764,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-20T09:54:03.085283",
+  "source_job_scaffold": "jobs/job_2bcd0f899d41",
+  "files": {
+    "csrc/ops/moe_re_routing/CMakeLists.txt": "fdb34a2dc6036fe4dcef39ad84796bad24efbbc09e7f736ce4c8f73dd4fb4a04",
+    "csrc/ops/moe_re_routing/op_kernel/moe_re_routing_host.cpp": "c590a7cd6b863431b7eb3b8b3e7adf6dc4c57ae0f70063a730801e424e263b2f",
+    "csrc/ops/moe_re_routing/op_kernel/moe_re_routing_kernel.cpp": "47823dd379663d71efddf8d44e0d0c4db4b81a7989840043f8cd67a9197c84da",
+    "csrc/ops/moe_re_routing/op_kernel/moe_re_routing_launch.h": "1a9e123960d1d3618596c7377286dc3e6570d384f6c6caf2f0f13032062c827c",
+    "csrc/ops/moe_re_routing/op_kernel/moe_re_routing_tiling.h": "073c984b43aa6fd712c93ce97f7eb58eb2767e662a7cdd1793b074b2f6b120d2",
+    "csrc/ops/moe_re_routing/op_plugin/moe_re_routing_plugin.cpp": "b695296986909287aed783dca855c2fdf0509ea185c8d40d0846bb55efce68b8"
+  }
+}

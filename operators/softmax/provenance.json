@@ -1,0 +1,19 @@
+{
+  "operator_key": "softmax",
+  "operator_name": "Softmax",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_d6a5240d0bd9",
+  "submission_id": "sub_96d7c306970c",
+  "score": 77.38268283096662,
+  "avg_speedup": 1.2334287985053207,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-18T11:40:49.448656",
+  "source_job_scaffold": "jobs/job_d6a5240d0bd9",
+  "files": {
+    "csrc/ops/softmax/CMakeLists.txt": "828e39aaa580a6aa7da7d76f756007cd211bd5673ce0bc6ee4c40d1a591c3bd0",
+    "csrc/ops/softmax/op_kernel/softmax_kernel.cpp": "bef7f0a2f824a86c73d34f3a8a1e115add614c93f9751bd7afaf86fc81a92dc3",
+    "csrc/ops/softmax/op_kernel/softmax_launch.h": "ae0e79e30600af92e1f8e9ef071c01492087e566e36c550567e896b150288635",
+    "csrc/ops/softmax/op_plugin/softmax_plugin.cpp": "f7e072f00d7214797a04ac30ea5add029347c8784893f597b3441659f77a2a63"
+  }
+}

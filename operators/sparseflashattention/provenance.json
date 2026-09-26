@@ -1,0 +1,19 @@
+{
+  "operator_key": "sparseflashattention",
+  "operator_name": "SparseFlashAttention",
+  "benchmark_version": "1.1.2",
+  "job_id": "job_875f3de90943",
+  "submission_id": "sub_a96a5efbb779",
+  "score": 55.03651739706878,
+  "avg_speedup": 0.17408048645770532,
+  "passed_cases": 20,
+  "total_cases": 20,
+  "updated_at": "2026-09-24T19:19:59.058214",
+  "source_job_scaffold": "jobs/job_875f3de90943",
+  "files": {
+    "csrc/ops/sparse_flash_attention/CMakeLists.txt": "516415a8cf59e1a422fed1ee5a635d20860fbe067ec63e4267493c2b5a73bdb1",
+    "csrc/ops/sparse_flash_attention/op_kernel/sparse_flash_attention_kernel.cpp": "f637e67d274565fcc82e2ca0301210ca01c0a8e70b0c17e6f6ac292a169af4db",
+    "csrc/ops/sparse_flash_attention/op_kernel/sparse_flash_attention_launch.h": "9885a3e54038a97c763ac5c5b882620753b2e15b126c7565627aacabe0030fb8",
+    "csrc/ops/sparse_flash_attention/op_plugin/sparse_flash_attention_plugin.cpp": "f4f4a13cd580a4f30bc3577dfddbfaf130c05ede750360c56a3dcd760edadde4"
+  }
+}
