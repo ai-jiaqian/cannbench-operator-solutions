@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from shutil import rmtree
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,7 +42,7 @@ def request(path: str, token: str | None = None) -> bytes:
     with urllib.request.urlopen(
         urllib.request.Request(BASE_URL + path, headers=headers), timeout=40
     ) as response:
-        return response.read()
+        return bytes(response.read())
 
 
 def keychain_token() -> str:
@@ -68,7 +69,9 @@ def normalize(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
-def source_files(archive: bytes, operators: list[dict]) -> tuple[dict, dict]:
+def source_files(
+    archive: bytes, operators: list[dict[str, Any]]
+) -> tuple[dict[str, bytes], dict[str, dict[str, bytes]]]:
     with zipfile.ZipFile(BytesIO(archive)) as source:
         if source.testzip() is not None:
             raise ValueError("ZIP integrity check failed")
@@ -90,14 +93,26 @@ def source_files(archive: bytes, operators: list[dict]) -> tuple[dict, dict]:
         or (name.startswith("cmake/") and name.endswith(".cmake"))
     }
     if not COMMON_FILES.issubset(common):
-        raise ValueError(f"missing common files: {sorted(COMMON_FILES - common.keys())}")
+        raise ValueError(
+            f"missing common files: {sorted(COMMON_FILES - common.keys())}"
+        )
 
     selected = {}
-    all_dirs = {name.split("/")[2] for name in members if name.startswith("csrc/ops/") and name.count("/") >= 3}
+    all_dirs = {
+        name.split("/")[2]
+        for name in members
+        if name.startswith("csrc/ops/") and name.count("/") >= 3
+    }
     for op in operators:
-        matches = [name for name in all_dirs if normalize(name) == normalize(op["operator_key"])]
+        matches = [
+            name
+            for name in all_dirs
+            if normalize(name) == normalize(op["operator_key"])
+        ]
         if len(matches) != 1:
-            raise ValueError(f"operator directory mismatch: {op['operator_key']}: {matches}")
+            raise ValueError(
+                f"operator directory mismatch: {op['operator_key']}: {matches}"
+            )
         prefix = f"csrc/ops/{matches[0]}/"
         files = {
             name: data
@@ -105,17 +120,25 @@ def source_files(archive: bytes, operators: list[dict]) -> tuple[dict, dict]:
             if name.startswith(prefix)
             and (name.endswith((".cpp", ".h")) or name.endswith("/CMakeLists.txt"))
         }
-        if not any(name.endswith(".cpp") for name in files) or prefix + "CMakeLists.txt" not in files:
+        if (
+            not any(name.endswith(".cpp") for name in files)
+            or prefix + "CMakeLists.txt" not in files
+        ):
             raise ValueError(f"incomplete operator source: {op['operator_key']}")
         selected[op["operator_key"]] = files
     return common, selected
 
 
-def selection(components: dict) -> list[dict]:
+def selection(components: dict[str, Any]) -> list[dict[str, Any]]:
     if components.get("entry_id") != SOLUTION_ID:
         raise ValueError("unexpected solution identity")
-    rows = [item for item in components["components"] if item.get("case_set") == "standard"]
-    if len(rows) != EXPECTED_OPERATORS or len({item["operator_key"] for item in rows}) != EXPECTED_OPERATORS:
+    rows = [
+        item for item in components["components"] if item.get("case_set") == "standard"
+    ]
+    if (
+        len(rows) != EXPECTED_OPERATORS
+        or len({item["operator_key"] for item in rows}) != EXPECTED_OPERATORS
+    ):
         raise ValueError("incomplete or duplicated public operator catalog")
     if any(item.get("display_user") != ACCOUNT for item in rows):
         raise ValueError("component belongs to another account")
@@ -131,7 +154,10 @@ def selection(components: dict) -> list[dict]:
         "total_cases",
         "updated_at",
     )
-    return sorted(({key: item.get(key) for key in keys} for item in rows), key=lambda row: row["operator_key"])
+    return sorted(
+        ({key: item.get(key) for key in keys} for item in rows),
+        key=lambda row: row["operator_key"],
+    )
 
 
 def write_file(path: Path, data: bytes) -> None:
@@ -139,7 +165,7 @@ def write_file(path: Path, data: bytes) -> None:
     path.write_bytes(data)
 
 
-def render_catalog(rows: list[dict]) -> str:
+def render_catalog(rows: list[dict[str, Any]]) -> str:
     lines = [
         "# Current official public components",
         "",
@@ -161,22 +187,30 @@ def render_catalog(rows: list[dict]) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--components-json", type=Path, help="use a saved public API response")
+    parser.add_argument(
+        "--components-json", type=Path, help="use a saved public API response"
+    )
     args = parser.parse_args()
     if args.components_json:
         components = json.loads(args.components_json.read_text())
     else:
         components = json.loads(
-            request(f"/api/public/leaderboard/solution/{SOLUTION_ID}/components?result_scope=default")
+            request(
+                f"/api/public/leaderboard/solution/{SOLUTION_ID}/components?result_scope=default"
+            )
         )
     rows = selection(components)
     current_path = ROOT / "results/current.json"
-    old = json.loads(current_path.read_text())["operators"] if current_path.exists() else []
+    old = (
+        json.loads(current_path.read_text())["operators"]
+        if current_path.exists()
+        else []
+    )
     if rows == old:
         print("No official component change.")
         return
 
-    by_job: dict[str, list[dict]] = {}
+    by_job: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         by_job.setdefault(row["job_id"], []).append(row)
     token = keychain_token()
@@ -209,7 +243,9 @@ def main() -> None:
         if old_dir.is_dir() and old_dir.name not in by_job:
             rmtree(old_dir)
     for old_dir in ops_dir.iterdir():
-        if old_dir.is_dir() and old_dir.name not in {row["operator_key"] for row in rows}:
+        if old_dir.is_dir() and old_dir.name not in {
+            row["operator_key"] for row in rows
+        }:
             rmtree(old_dir)
 
     for job, (archive, common) in downloaded.items():
@@ -220,11 +256,20 @@ def main() -> None:
             write_file(directory / name, data)
         write_file(
             directory / "provenance.json",
-            (json.dumps({
-                "job_id": job,
-                "official_submission_zip_sha256": digest(archive),
-                "files": {name: digest(data) for name, data in sorted(common.items())},
-            }, indent=2, ensure_ascii=False) + "\n").encode(),
+            (
+                json.dumps(
+                    {
+                        "job_id": job,
+                        "official_submission_zip_sha256": digest(archive),
+                        "files": {
+                            name: digest(data) for name, data in sorted(common.items())
+                        },
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+                + "\n"
+            ).encode(),
         )
 
     for row in rows:
@@ -237,20 +282,40 @@ def main() -> None:
             write_file(directory / name, data)
         write_file(
             directory / "provenance.json",
-            (json.dumps({
-                **row,
-                "source_job_scaffold": f"jobs/{row['job_id']}",
-                "files": {name: digest(data) for name, data in sorted(files.items())},
-            }, indent=2, ensure_ascii=False) + "\n").encode(),
+            (
+                json.dumps(
+                    {
+                        **row,
+                        "source_job_scaffold": f"jobs/{row['job_id']}",
+                        "files": {
+                            name: digest(data) for name, data in sorted(files.items())
+                        },
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+                + "\n"
+            ).encode(),
         )
 
     current_path.parent.mkdir(exist_ok=True)
-    write_file(current_path, (json.dumps({
-        "solution_id": SOLUTION_ID,
-        "source_url": BASE_URL + f"/api/public/leaderboard/solution/{SOLUTION_ID}/components?result_scope=default",
-        "retrieved_at": datetime.now(timezone.utc).isoformat(),
-        "operators": rows,
-    }, indent=2, ensure_ascii=False) + "\n").encode())
+    write_file(
+        current_path,
+        (
+            json.dumps(
+                {
+                    "solution_id": SOLUTION_ID,
+                    "source_url": BASE_URL
+                    + f"/api/public/leaderboard/solution/{SOLUTION_ID}/components?result_scope=default",
+                    "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                    "operators": rows,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n"
+        ).encode(),
+    )
     write_file(ROOT / "CATALOG.md", render_catalog(rows).encode())
     print(f"Updated {len(rows)} operators from {len(by_job)} official Jobs.")
 

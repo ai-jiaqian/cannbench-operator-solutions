@@ -18,12 +18,23 @@ def main() -> None:
     parser.add_argument("output", type=Path, help="new output directory")
     args = parser.parse_args()
     catalog = json.loads((ROOT / "results/current.json").read_text())
-    row = next((item for item in catalog["operators"] if item["operator_key"] == args.operator), None)
+    row = next(
+        (
+            item
+            for item in catalog["operators"]
+            if item["operator_key"] == args.operator
+        ),
+        None,
+    )
     if row is None:
         parser.error(f"unknown operator: {args.operator}")
     if args.output.exists():
         parser.error(f"output already exists: {args.output}")
-    copytree(ROOT / "jobs" / row["job_id"], args.output, ignore=lambda _dir, names: {"provenance.json"} & set(names))
+    copytree(
+        ROOT / "jobs" / row["job_id"],
+        args.output,
+        ignore=lambda _dir, names: {"provenance.json"} & set(names),
+    )
     operator_root = ROOT / "operators" / args.operator / "csrc" / "ops"
     for op_dir in operator_root.iterdir():
         copytree(op_dir, args.output / "csrc" / "ops" / op_dir.name)
