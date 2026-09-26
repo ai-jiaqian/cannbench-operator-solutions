@@ -1,4 +1,4 @@
-# CANNBench 官网自进化Agent打榜算子源码
+# CANNBench 官网自进化Agent最优算子源码
 
 简体中文 | [English](README.en.md)
 
