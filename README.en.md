@@ -8,7 +8,7 @@ This repository publishes the source of the **currently selected public-case com
 
 - `operators/<operator_key>/csrc/ops/<source_dir>/`: exact selected operator source files from the official submission ZIP. `provenance.json` records their SHA-256 hashes, source Job, official score, case count, and benchmark version.
 - `results/current.json`: current public solution selection and retrieval timestamp.
-- `scripts/sync_official.py`: fetches the current component list and updates only when the official selection changes. It reads the account token from the local macOS Keychain and never saves it in this repository.
+- `scripts/sync_official.py`: fetches the current component list and updates only when the official selection changes.
 
 ## Build and verification
 

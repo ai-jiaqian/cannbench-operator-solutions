@@ -8,7 +8,7 @@
 
 - `operators/<operator_key>/csrc/ops/<source_dir>/`：从官网提交 ZIP 中提取的、当前选中算子的原始源码文件。旁边的 `provenance.json` 记录文件 SHA-256、来源 Job、官网分数、通过用例数和评测集版本。
 - `results/current.json`：当前公开组件清单及获取时间。
-- `scripts/sync_official.py`：读取官网当前组件；只有组件发生变化时才更新仓库。账号令牌从本机 macOS 钥匙串读取，不写入仓库。
+- `scripts/sync_official.py`：读取官网当前组件；只有组件发生变化时才更新仓库。
 
 ## 校验与使用
 
