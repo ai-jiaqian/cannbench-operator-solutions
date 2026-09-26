@@ -1,25 +1,33 @@
-# CANNBench official best operator sources
+# CANNBench 官网最优算子源码
 
-This repository publishes the source of the **currently selected public-case components** in the `jiaqian` CANNBench solution. It is an operator-source catalog, with one exact source snapshot and official Job reference per operator. See [CATALOG.md](CATALOG.md) for the current 53 entries.
+简体中文 | [English](README.en.md)
 
-The catalog is selected by CANNBench's public solution-components API for [our solution](https://cannbench.com/leaderboard). It is **not** a claim that all 53 operators pass every test: the pass count and benchmark version are stated on each row. Public results do not establish hidden-case correctness or performance. Local experiment results are not used to select entries.
+本仓库公开 `jiaqian` 在 CANNBench 方案中**当前选中的公开评测组件源码**。每个算子对应一份源码快照和一个官网 Job，可在 [算子目录](CATALOG.md)查看当前 53 个算子的来源与成绩。这里的“最优”指**我们这套方案当前选用的组件**，不是全站所有参赛者的最高成绩。
 
-## Layout
+目录以 [CANNBench 官网方案](https://cannbench.com/leaderboard)的公开组件接口为准。它不表示 53 个算子全部通过：逐算子的通过用例数和评测集版本均列在目录中。公开集成绩不能证明隐藏集的正确性或性能；本地实验成绩也不参与本目录的选择。
 
-- `operators/<operator_key>/csrc/ops/<source_dir>/`: exact selected operator source files from the official submission ZIP. `provenance.json` records their SHA-256 hashes, source Job, official score, case count, and benchmark version.
-- `jobs/<job_id>/`: the common build scaffold and Python entrypoint from that Job's submitted ZIP. `provenance.json` records the original ZIP SHA-256 and each published file hash.
-- `results/current.json`: current public solution selection and retrieval timestamp.
-- `scripts/sync_official.py`: fetches the current component list and updates only when the official selection changes. It reads the account token from the local macOS Keychain and never saves it in this repository.
-- `scripts/package_operator.py`: assembles one operator and its original Job scaffold into a source directory for local inspection/build. This filtered package is not byte-identical to the full original multi-operator submission ZIP.
+## 仓库结构
 
-## Build and verification
+- `operators/<operator_key>/csrc/ops/<source_dir>/`：从官网提交 ZIP 中提取的、当前选中算子的原始源码文件。旁边的 `provenance.json` 记录文件 SHA-256、来源 Job、官网分数、通过用例数和评测集版本。
+- `jobs/<job_id>/`：对应 Job 提交包中的公共构建文件和 Python 入口。`provenance.json` 记录原始 ZIP 的 SHA-256 及公开文件的哈希。
+- `results/current.json`：当前公开组件清单及获取时间。
+- `scripts/sync_official.py`：读取官网当前组件；只有组件发生变化时才更新仓库。账号令牌从本机 macOS 钥匙串读取，不写入仓库。
+- `scripts/package_operator.py`：将一个算子与其来源 Job 的构建文件组装为单算子源码目录，供本地检查或构建。过滤后的目录与原始多算子提交 ZIP 并非字节一致。
 
-Run `python3 scripts/verify.py` after checkout to verify the published source hashes. To assemble one operator, run `python3 scripts/package_operator.py exp /tmp/cannbench-exp-source`. Build in an Ascend CANN/PyTorch/torch_npu environment compatible with the selected Job. CANNBench's [evaluation guide](https://gitcode.com/cann/cann-bench/blob/master/docs/guide/quick_start.md) documents the source build and per-operator evaluation workflow. When using a filtered package on the website, explicitly select the one intended operator; the preserved Python entrypoint may also define wrappers for other operators from the original multi-operator Job.
+## 校验与使用
 
-The official score belongs to the original Job, identified in `provenance.json`. Reassembling or editing a package creates a new candidate and requires a new evaluation before claiming the same result. The repository's verification script checks bytes and metadata; it does not run an NPU benchmark.
+检出仓库后，运行 `python3 scripts/verify.py` 核对公开源码的哈希。组装单个算子的示例：
 
-## License and origin
+```bash
+python3 scripts/package_operator.py exp /tmp/cannbench-exp-source
+```
 
-The CANNBench scaffold and many submitted source files retain Huawei copyright and CANN Open Software License Agreement Version 2.0 notices. [LICENSE](LICENSE) contains that agreement; it restricts use to software for Huawei AI Processors and requires retaining notices and the agreement when redistributing. This repository makes the source public under those terms. It does not relicense Huawei-origin files under Apache or claim OSI-approved licensing. The operator selection metadata and repository scripts are contributed under the same repository license. See [NOTICE](NOTICE) for source provenance.
+构建时需要与来源 Job 兼容的昇腾 CANN、PyTorch 和 `torch_npu` 环境。[CANNBench 评测指南](https://gitcode.com/cann/cann-bench/blob/master/docs/guide/quick_start.md)说明了源码构建和单算子评测方法。若将过滤后的源码包提交到官网，应明确选择目标算子；保留的 Python 入口可能还定义了原始多算子 Job 中其他算子的包装函数。
 
-No tokens, private benchmark cases, model traffic, experiment logs, or compiled artifacts are part of this repository.
+目录中的官网分数属于 `provenance.json` 指向的**原始 Job**。重新组装或修改源码会形成新的候选，必须重新评测，才能声称取得相同成绩。仓库的校验脚本只检查文件和元数据，不运行 NPU 评测。
+
+## 许可与来源
+
+CANNBench 构建文件及许多提交源码保留了华为版权和 CANN Open Software License Agreement Version 2.0 声明。[LICENSE](LICENSE) 是该许可的全文：它将用途限制在华为 AI 处理器相关软件，并要求再分发时保留声明和许可。本仓库按这些条款公开源码，未将华为来源文件改授 Apache 许可，也不宣称该许可经过 OSI 认证。算子选择元数据和本仓脚本采用相同的仓库许可。源码来源见 [NOTICE](NOTICE)。
+
+本仓库不包含账号令牌、私有评测用例、模型交互、实验日志或编译产物。
