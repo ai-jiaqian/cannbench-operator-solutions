@@ -4,8 +4,6 @@
 
 This repository publishes the source of the **currently selected public-case components** in the `jiaqian` CANNBench solution. It is an operator-source catalog, with one exact source snapshot and official Job reference per operator. See [CATALOG.md](CATALOG.md) for the current 53 entries.
 
-The catalog is selected by CANNBench's public solution-components API for [our solution](https://cannbench.com/leaderboard). It is **not** a claim that all 53 operators pass every test: the pass count and benchmark version are stated on each row. Public results do not establish hidden-case correctness or performance. Local experiment results are not used to select entries.
-
 ## Layout
 
 - `operators/<operator_key>/csrc/ops/<source_dir>/`: exact selected operator source files from the official submission ZIP. `provenance.json` records their SHA-256 hashes, source Job, official score, case count, and benchmark version.
