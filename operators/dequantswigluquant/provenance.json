@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-24T14:21:17.106095",
-  "source_job_scaffold": "jobs/job_426bfd3f1f36",
   "files": {
     "csrc/ops/dequant_swiglu_quant/CMakeLists.txt": "5c3efa351efe26b22645ec59f6a48a4580b702c791ab4d9747fa3ad4986a4b95",
     "csrc/ops/dequant_swiglu_quant/op_kernel/dqsq_kernel.cpp": "da284a0e2bd35cd47fd279eead748b8c7741dc0535beffafe184e46c0ebd13ec",

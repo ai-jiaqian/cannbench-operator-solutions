@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-23T09:51:25.681793",
-  "source_job_scaffold": "jobs/job_430849cb00ba",
   "files": {
     "csrc/ops/sigmoid/CMakeLists.txt": "ca52c8bf146c092f953d1c583f58565c058cbd90c866d250a49e6c256a40fa9e",
     "csrc/ops/sigmoid/op_kernel/sigmoid_kernel.cpp": "f358c225b3154b440ba9a5445c09cb1aa73a28241cee5bddb6318a539b07c2b5",

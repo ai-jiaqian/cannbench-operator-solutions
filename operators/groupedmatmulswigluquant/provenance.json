@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-23T15:27:54.271826",
-  "source_job_scaffold": "jobs/job_fa17c7ca9b5f",
   "files": {
     "csrc/ops/grouped_matmul_swiglu_quant/CMakeLists.txt": "1d8845acfc29efca0bba1a3d35d9345b11e8a20de5a6f30b675cd1550b94c1b4",
     "csrc/ops/grouped_matmul_swiglu_quant/op_kernel/gmsq_cube_kernel.cpp": "c34b8fb4c27a9f422dc876421514f1d72b76ae20cfac8768edfaf46f13ed51b7",

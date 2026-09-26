@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-23T17:53:57.836630",
-  "source_job_scaffold": "jobs/job_2f7ae99d2cf0",
   "files": {
     "csrc/ops/mla_prolog/CMakeLists.txt": "9f715d7ee0c791b47a979c03c087aeb2e006d8d00ddaa1f4ff2e247e90b3d2d8",
     "csrc/ops/mla_prolog/op_kernel/mla_prolog_launch.h": "45992c6da7b223be28788c5e001329010d208879cdbfb0ec0bd7081984bb5829",

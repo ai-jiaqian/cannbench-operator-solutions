@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-23T23:51:42.322032",
-  "source_job_scaffold": "jobs/job_332127342253",
   "files": {
     "csrc/ops/cross_entropy_loss/CMakeLists.txt": "bf6358e71e8da241eb8aa96723e7f214723ed326d78ae722b9f82aebcc842e22",
     "csrc/ops/cross_entropy_loss/op_kernel/ce_kernel.cpp": "26cbf545aaf30fdb033baa4330a5e9102c0a8ab6bb6b876cff0ec70dc1231fe4",

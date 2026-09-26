@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-22T22:11:27.119652",
-  "source_job_scaffold": "jobs/job_e774c38307d7",
   "files": {
     "csrc/ops/apply_rotary_pos_emb/CMakeLists.txt": "5601058ff09300935d21be6d05a831d346cc3925e089b819d256ea7f84f2ae4e",
     "csrc/ops/apply_rotary_pos_emb/op_kernel/rope_kernel.cpp": "b9c90d644fca66bb0c3bcb8cc3be9efa3679d32568a5babe79e62a162be1add1",

@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-24T09:33:23.053537",
-  "source_job_scaffold": "jobs/job_0c47cac62dbd",
   "files": {
     "csrc/ops/apply_adam_w/CMakeLists.txt": "c3f419eb1a00ea731f1acab08bb4c12a1b2542ae26dfe84006f126129d68b948",
     "csrc/ops/apply_adam_w/op_kernel/apply_adam_w_kernel.cpp": "0fbc0a18a6476a5bb497d37df700d12efa03e87e37dd44a4f1fc05d15a6a6f81",

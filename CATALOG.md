@@ -54,6 +54,6 @@ Source: [CANNBench solution](https://cannbench.com/leaderboard). Scores and pass
 | [SwiGlu](operators/swiglu/) | 1.1.1 | 20/20 | 81.971313 | [job_26536843a4af](https://cannbench.com/jobs/job_26536843a4af) |
 | [TopK](operators/topk/) | 1.1.2 | 20/20 | 59.708384 | [job_7fcd35ccf2ca](https://cannbench.com/jobs/job_7fcd35ccf2ca) |
 | [Transpose](operators/transpose/) | 1.1.2 | 20/20 | 71.684887 | [job_2bcd0f899d41](https://cannbench.com/jobs/job_2bcd0f899d41) |
-| [Unique](operators/unique/) | 1.1.2 | 15/20 | 0.000000 | [job_7e94c4b5a0ce](https://cannbench.com/jobs/job_7e94c4b5a0ce) |
+| [Unique](operators/unique/) | 1.1.2 | 20/20 | 51.386118 | [job_c8d438a8b03f](https://cannbench.com/jobs/job_c8d438a8b03f) |
 | [UnsortedSegmentSum](operators/unsortedsegmentsum/) | 1.1.2 | 20/20 | 74.171701 | [job_bca25b1a58b3](https://cannbench.com/jobs/job_bca25b1a58b3) |
 | [WeightQuantBatchMatmul](operators/weightquantbatchmatmul/) | 1.1.2 | 20/20 | 64.903397 | [job_dd14f002f64f](https://cannbench.com/jobs/job_dd14f002f64f) |

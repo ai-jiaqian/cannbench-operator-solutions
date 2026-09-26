@@ -1,9 +1,7 @@
 This repository contains operator source extracted from submission ZIPs belonging to
-the jiaqian CANNBench solution. Each operator and common scaffold records the
-exact source Job, original ZIP SHA-256, and published file SHA-256 hashes.
+the jiaqian CANNBench solution. Each operator records its source Job and the
+published source file SHA-256 hashes.
 
-Common build scaffold and files carrying Huawei copyright notices derive from
-the CANNBench project and its submission templates. Their notices have been
-retained. The CANN Open Software License Agreement Version 2.0 is included as
-LICENSE. Official evaluator code, Golden implementations, hidden cases, and
-private run evidence are not included.
+Files carrying Huawei copyright notices retain those notices. The CANN Open
+Software License Agreement Version 2.0 is included as LICENSE. Official evaluator
+code, Golden implementations, hidden cases, and private run evidence are not included.

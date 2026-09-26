@@ -2,18 +2,17 @@
   "operator_key": "unique",
   "operator_name": "Unique",
   "benchmark_version": "1.1.2",
-  "job_id": "job_7e94c4b5a0ce",
-  "submission_id": "sub_132ce4bb58c9",
-  "score": 0.0,
-  "avg_speedup": 0.01908586239425752,
-  "passed_cases": 15,
+  "job_id": "job_c8d438a8b03f",
+  "submission_id": "sub_428116a3de0f",
+  "score": 51.3861181298916,
+  "avg_speedup": 0.032128950584907875,
+  "passed_cases": 20,
   "total_cases": 20,
-  "updated_at": "2026-09-21T10:29:57.115445",
-  "source_job_scaffold": "jobs/job_7e94c4b5a0ce",
+  "updated_at": "2026-09-26T07:25:54.523490",
   "files": {
     "csrc/ops/unique/CMakeLists.txt": "c82b35fdbf6df112c98b530a4d5cf7819e4014611394f28c8ca83dd6f0d7d118",
-    "csrc/ops/unique/op_kernel/unique_kernel.cpp": "7d86e52a3a911e236f553ff3877ba581222f1b99d7f44f81624359fc3d70ebbb",
-    "csrc/ops/unique/op_kernel/unique_launch.h": "6b0ce40466ad37bcb788ace0edd8cfd5034a52cb46cfba677443ca034e7609a6",
-    "csrc/ops/unique/op_plugin/unique_plugin.cpp": "39bf763ef0a4a3fb2c3df83500b8260f3262ef665a16da65d3384e55a48ce1d0"
+    "csrc/ops/unique/op_kernel/unique_kernel.cpp": "4122d5a044fc0a2773c5a5b1789fed9a06493c84972f46951cb7f5eb24c8eb4c",
+    "csrc/ops/unique/op_kernel/unique_launch.h": "73dc782859eeb74f2b1b737113e67f5ffb9021f9f43796a1da9163cac008555a",
+    "csrc/ops/unique/op_plugin/unique_plugin.cpp": "6f603a80580c18afbf8166f3961da7a4d52f74a1cd806d3c6b57c9fa15db3604"
   }
 }

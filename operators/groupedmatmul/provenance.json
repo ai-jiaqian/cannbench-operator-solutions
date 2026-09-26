@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-22T23:19:58.685749",
-  "source_job_scaffold": "jobs/job_ff4ade8ff90b",
   "files": {
     "csrc/ops/grouped_matmul/CMakeLists.txt": "d36b3d334b6236ae85c37a3c148dc0bfc7d672f5486467fcfc9d6b19eea03c53",
     "csrc/ops/grouped_matmul/op_kernel/grouped_matmul_kernel.cpp": "d4ba8c89c65ff39472cdac516661e763c1267c490baebb9b32bd3fa61196d833",

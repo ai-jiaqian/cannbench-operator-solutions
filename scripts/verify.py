@@ -24,16 +24,13 @@ def main() -> None:
     rows = catalog["operators"]
     if len(rows) != 53 or len({row["operator_key"] for row in rows}) != 53:
         raise ValueError("operator catalog is not complete")
-    jobs = {row["job_id"] for row in rows}
-    for job in jobs:
-        verify_files(ROOT / "jobs" / job)
     for row in rows:
         directory = ROOT / "operators" / row["operator_key"]
         provenance = json.loads((directory / "provenance.json").read_text())
         if any(provenance[key] != row[key] for key in row):
             raise ValueError(f"official metadata mismatch: {row['operator_key']}")
         verify_files(directory)
-    print(f"Verified 53 operators and {len(jobs)} Job scaffolds.")
+    print("Verified 53 operator source trees.")
 
 
 if __name__ == "__main__":

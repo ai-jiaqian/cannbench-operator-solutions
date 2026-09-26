@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-23T23:21:33.978490",
-  "source_job_scaffold": "jobs/job_bca25b1a58b3",
   "files": {
     "csrc/ops/unsorted_segment_sum/CMakeLists.txt": "4b780ab6601fad849403be7371e183c350f4f8238abd2b7e437ec0a9cf42d335",
     "csrc/ops/unsorted_segment_sum/op_kernel/unsorted_segment_sum_kernel.cpp": "9ccb1f3c5af9e166e3a346c47d91fdcd7dec179103f3df76537ce7b60992664e",

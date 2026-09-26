@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-23T00:01:47.864810",
-  "source_job_scaffold": "jobs/job_65fa5b855304",
   "files": {
     "csrc/ops/depthwise_conv_2d/CMakeLists.txt": "4ef0fe5cffaec37610f1a4f1ba748e8d9d12890c3455f132697ebada422e72e2",
     "csrc/ops/depthwise_conv_2d/op_kernel/depthwise_conv_2d_kernel.cpp": "402188315edf0ca66d15559fa0e7199ba85dd3e0ecc5bf46c1dd9f90d7cd0e3d",

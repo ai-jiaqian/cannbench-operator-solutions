@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-22T10:25:20.778739",
-  "source_job_scaffold": "jobs/job_ee772e520b94",
   "files": {
     "csrc/ops/moe_gating_top_k_softmax/CMakeLists.txt": "341f732b7d95537c495a62ae334afca0da84aca955f55c3eb7436203f03ed5b3",
     "csrc/ops/moe_gating_top_k_softmax/op_kernel/moe_gating_kernel.cpp": "e971f5cc5910c739053dcc2409a9bebc2a4d432b333c783b2ae3bbd8e2a2ecad",

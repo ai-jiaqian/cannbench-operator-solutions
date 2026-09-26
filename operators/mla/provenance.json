@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-24T16:51:45.779416",
-  "source_job_scaffold": "jobs/job_e2005e05b297",
   "files": {
     "csrc/ops/mla/CMakeLists.txt": "323e403a314140c11fed3901667eb5d494756d080a9f829914b00d6df6e196c9",
     "csrc/ops/mla/op_kernel/mla_cube.cpp": "cbb3a91b5d9ddec9a8e8066d8f149aefc0562b27ae5fff27462c8530b7f83692",

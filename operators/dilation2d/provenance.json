@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-20T09:54:03.085283",
-  "source_job_scaffold": "jobs/job_2bcd0f899d41",
   "files": {
     "csrc/ops/dilation_2d/CMakeLists.txt": "48ce58757f8fb4a0355c0749d37b4ff9125f9202322be127082863c35851a97f",
     "csrc/ops/dilation_2d/op_kernel/dilation_2d_kernel.cpp": "4d7c93c2f736b03c2104133eeae317e718200169cb2dcc3860f7ab091c2cbd9e",

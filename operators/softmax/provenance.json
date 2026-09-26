@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-18T11:40:49.448656",
-  "source_job_scaffold": "jobs/job_d6a5240d0bd9",
   "files": {
     "csrc/ops/softmax/CMakeLists.txt": "828e39aaa580a6aa7da7d76f756007cd211bd5673ce0bc6ee4c40d1a591c3bd0",
     "csrc/ops/softmax/op_kernel/softmax_kernel.cpp": "bef7f0a2f824a86c73d34f3a8a1e115add614c93f9751bd7afaf86fc81a92dc3",

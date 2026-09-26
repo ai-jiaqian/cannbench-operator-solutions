@@ -10,1170 +10,1538 @@
 
 /*!
  * \file unique_kernel.cpp
- * \brief Unique (y = sorted distinct values of x, optional inverse) - kernel + tiling + launch.
- *        Compiled with bisheng (-xasc), target Ascend 910B / dav-2201 (generic SIMD / MemBase route).
+ * \brief Unique device kernels + launch wrappers (bisheng + -xasc, dav-2201).
  *
- * Route (bounded key space): every supported dtype is mapped to a *monotone* unsigned key ("bin")
- *   uint8  : bin = v
- *   int8   : bin = v + 128
- *   fp16/bf16 : bin = monotone16(bits)  (order preserving, -0.0 -> 0x7FFF, +0.0 -> 0x8000)
- *   int32  : bin = v - min(v)
- *   int64  : bin = v - min(v)
- * Deduplication and rank computation are then done with a *presence bitmap* over [0, BIN):
- *   - every block sets the bits of its own chunk in a private UB bitmap,
- *   - the per block bitmaps are OR-merged into one global bitmap in GM,
- *   - rank(b) = number of set bits strictly below b  (prefix popcount of the bitmap).
- * y[rank(b)] = value(b) for every set b, and inverse[i] = rank(bin(x[i])).  This needs no sorting
- * and no per element scatter, which keeps the wide uint8 (268M element) case cheap.
+ *   y       = distinct values of flatten(x), ascending numeric order
+ *   inverse = int64 rank array with flatten(x)[i] == y[inverse[i]]
  *
- * +/-0.0 handling follows torch.unique: the two bit patterns share one unique value only when both
- * are actually present; when only one sign occurs it is preserved.  The merge is applied as
- * "bin 0x7FFF (=-0.0) is treated as absent whenever 0x8000 (=+0.0) is also present".
+ * Every input element is mapped by an order preserving transform to an unsigned code so
+ * that numeric order equals code order:
+ *   uint8  : code = v                    int8  : code = bits ^ 0x80
+ *   int32  : code = bits ^ 0x80000000    int64 : code = bits ^ 0x8000..
+ *   fp16/bf16 : sign ? ~bits : bits | 0x8000   (16 bit, -0.0 folded onto +0.0)
+ *   fp32      : sign ? ~bits : bits | 0x80000000
  *
- * All host/device data movement is DMA based (DataCopyPad) except for the fp32 route: its presence
- * bitmap spans the whole 32 bit key space, so it cannot live in UB.  There every block owns one
- * disjoint key shard in GM and updates only its own words through scalar GetValue/SetValue (the
- * compiler's automatic DCCI makes those writes visible to the DMA reads of the later kernels); the
- * uint8/int8/fp16/bf16/int32/int64 routes touch UB only and raise no Scalar<->DataCache question.
+ * Two strategies are available and the choice is made on device from the reduced code range
+ * (maxKey - minKey + 1):
+ *
+ *   dense (cap <= 262144):
+ *     uk_dpres builds a per-core bitmap over the reduced code range, uk_dscan ORs the
+ *     per-core bitmaps and builds the exclusive word prefix (+ D), uk_dy decodes the distinct
+ *     codes into y and uk_dinv derives each element rank as
+ *     wordPrefix[code>>5] + popcount(bitmapWord & ((1 << (code & 31)) - 1)).
+ *
+ *   radix (cap > 262144):
+ *     LSD radix sort (8 bit digits, 256 bins) of the (reduced code, original index) pairs.
+ *     uk_rhist/uk_rscan/uk_rscatter implement the stable counting sort pass; the scatter
+ *     stages the locally digit sorted tile in UB and writes each digit block with a
+ *     DataCopyPad so that no scalar GM store is ever needed.  uk_rflag/uk_rbase/uk_remit
+ *     turn runs into y and into a per sorted-position rank array, and a second radix sort of
+ *     (original index, rank) ordered by original index yields inverse in linear order.
+ *
+ * All per element work outside DMA is UB scalar access or vector primitives; the only GM
+ * stores are DataCopy/DataCopyPad transfers from UB.
  */
 
 #include <tuple>
 #include <algorithm>
 #include <cstdint>
-#include <type_traits>
-
 #include "kernel_operator.h"
 #include "platform/platform_ascendc.h"
-
 #include "unique_launch.h"
 
-namespace unique_impl {
+using namespace AscendC;
 
-constexpr int32_t MAX_BMP_WORDS = 8192;      // up to 262144 bins
-constexpr int32_t TILE_ELEMS = 4096;         // elements per DMA tile
-constexpr int32_t EMIT_CHUNK = 4096;         // elements per y output flush
-constexpr int64_t MIN_ELEMS_PER_CORE = 4096;
+namespace {
 
-__aicore__ inline uint32_t Popc32(uint32_t v)
-{
-    v = v - ((v >> 1) & 0x55555555u);
-    v = (v & 0x33333333u) + ((v >> 2) & 0x33333333u);
-    v = (v + (v >> 4)) & 0x0F0F0F0Fu;
-    return (v * 0x01010101u) >> 24;
-}
+constexpr int64_t UK_TILE = 2048;  // elements staged per input tile
+// step used by the bitmap OR-merge in uk_dscan_kernel; the builtin is asked for 2x the step
+// so the whole range is covered regardless of how many elements the call actually processes.
+constexpr int64_t UK_ORSTEP = 64;
+// number of independent bitmap lanes used to break the dependent read-modify-write chain in
+// uk_dpres_kernel (uk_dpres_kernel is the dominant cost of the dense path)
+constexpr int64_t UK_LANES = 4;
+// upper bound on the payload of a single DataCopyPad burst (elements of uint32_t => 4 KB)
+constexpr int64_t UK_BURST = 1024;
+constexpr int64_t UK_STILE = 2048; // elements staged per scatter/remit tile
+constexpr int64_t UK_YOUT = 2048;  // y emit buffer elements
 
-// Monotone unsigned key of one element.
-template <typename T>
-__aicore__ inline uint32_t BinOf(T v, int64_t minVal)
-{
-    if constexpr (std::is_same<T, uint8_t>::value) {
-        return static_cast<uint32_t>(v);
-    } else if constexpr (std::is_same<T, int8_t>::value) {
-        return static_cast<uint32_t>(static_cast<int32_t>(v) + 128);
-    } else if constexpr (std::is_same<T, uint16_t>::value) {
-        uint32_t u = static_cast<uint32_t>(v);
-        return ((u & 0x8000u) != 0u) ? ((~u) & 0xFFFFu) : (u | 0x8000u);
-    } else if constexpr (std::is_same<T, int32_t>::value) {
-        return static_cast<uint32_t>(static_cast<int64_t>(v) - minVal);
-    } else {
-        return static_cast<uint32_t>(v - minVal);
-    }
-}
-
-// Inverse of BinOf.
-template <typename T>
-__aicore__ inline T UnmapOf(uint32_t b, int64_t minVal)
-{
-    if constexpr (std::is_same<T, uint8_t>::value) {
-        return static_cast<uint8_t>(b);
-    } else if constexpr (std::is_same<T, int8_t>::value) {
-        return static_cast<int8_t>(static_cast<int32_t>(b) - 128);
-    } else if constexpr (std::is_same<T, uint16_t>::value) {
-        return static_cast<uint16_t>(((b & 0x8000u) != 0u) ? (b & 0x7FFFu) : ((~b) & 0xFFFFu));
-    } else if constexpr (std::is_same<T, int32_t>::value) {
-        return static_cast<int32_t>(static_cast<int64_t>(b) + minVal);
-    } else {
-        return static_cast<int64_t>(static_cast<int64_t>(b) + minVal);
-    }
-}
-
-// Key space size.
-template <typename T>
-__aicore__ inline int64_t BinCountOf(int64_t minVal, int64_t maxVal)
-{
-    if constexpr (std::is_same<T, uint8_t>::value || std::is_same<T, int8_t>::value) {
-        return 256;
-    } else if constexpr (std::is_same<T, uint16_t>::value) {
-        return 65536;
-    } else {
-        int64_t n = maxVal - minVal + 1;
-        if (n < 1) n = 1;
-        if (n > (int64_t)MAX_BMP_WORDS * 32) n = (int64_t)MAX_BMP_WORDS * 32;
-        return n;
-    }
-}
-
-// -0.0 / +0.0 bins (uint16 float reinterpreting dtypes only).
-template <typename T>
-__aicore__ inline void ZeroMergeBins(int32_t &neg0, int32_t &pos0)
-{
-    if constexpr (std::is_same<T, uint16_t>::value) {
-        neg0 = 0x7FFF;
-        pos0 = 0x8000;
-    } else {
-        neg0 = -1;
-        pos0 = -1;
-    }
-}
-
-}  // namespace unique_impl
-
-using namespace unique_impl;
+constexpr int64_t UK_EV0 = 0;
+constexpr int64_t UK_EV1 = 1;
+constexpr int64_t UK_EV2 = 2;
+constexpr int64_t UK_EV3 = 3;
+constexpr int64_t UK_EV4 = 4;
+constexpr int64_t UK_EV5 = 5;
+constexpr int64_t UK_EV6 = 6;
+constexpr int64_t UK_EV7 = 7;
 
 // ---------------------------------------------------------------------------
-// min / max of x (int32 / int64 only, the only dtypes whose bin origin is data dependent)
+// raw element types per dtype code
 // ---------------------------------------------------------------------------
-template <typename T>
-__global__ __aicore__ void unique_minmax_partial(GM_ADDR x, GM_ADDR out, int64_t numel, int64_t blockLen,
-                                                 uint32_t tileElems)
+template <int64_t DT>
+struct UkRaw;
+
+template <>
+struct UkRaw<UK_DT_U8> {
+    using T = uint8_t;
+};
+template <>
+struct UkRaw<UK_DT_I8> {
+    using T = uint8_t;
+};
+template <>
+struct UkRaw<UK_DT_F16> {
+    using T = uint16_t;
+};
+template <>
+struct UkRaw<UK_DT_BF16> {
+    using T = uint16_t;
+};
+template <>
+struct UkRaw<UK_DT_I32> {
+    using T = uint32_t;
+};
+template <>
+struct UkRaw<UK_DT_I64> {
+    using T = uint64_t;
+};
+template <>
+struct UkRaw<UK_DT_F32> {
+    using T = uint32_t;
+};
+
+// order preserving transform: element bits -> reduced monotonic code
+template <int64_t DT>
+__aicore__ inline uint32_t UkCode(uint64_t r, uint64_t minKey)
 {
-    AscendC::TPipe pipe;
-    AscendC::GlobalTensor<T> xGm;
-    AscendC::GlobalTensor<int64_t> outGm;
-    xGm.SetGlobalBuffer((__gm__ T *)x);
-    outGm.SetGlobalBuffer((__gm__ int64_t *)out);
-
-    AscendC::TBuf<AscendC::TPosition::VECCALC> inBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> resBuf;
-    pipe.InitBuffer(inBuf, tileElems * sizeof(T));
-    pipe.InitBuffer(resBuf, 64);
-
-    const int64_t start = blockLen * static_cast<int64_t>(AscendC::GetBlockIdx());
-    int64_t end = start + blockLen;
-    if (end > numel) end = numel;
-
-    int64_t mn = 9223372036854775807LL;
-    int64_t mx = (-9223372036854775807LL - 1);
-
-    auto inL = inBuf.Get<T>();
-    for (int64_t off = start; off < end; off += static_cast<int64_t>(tileElems)) {
-        int64_t n = end - off;
-        if (n > static_cast<int64_t>(tileElems)) n = static_cast<int64_t>(tileElems);
-        AscendC::DataCopyExtParams cp{1, static_cast<uint32_t>(n * (int64_t)sizeof(T)), 0, 0, 0};
-        AscendC::DataCopyPadExtParams<T> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(inL, xGm[off], cp, pp);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        __ubuf__ T *xp = (__ubuf__ T *)inL.GetPhyAddr();
-        for (int64_t i = 0; i < n; ++i) {
-            int64_t v = static_cast<int64_t>(xp[i]);
-            if (v < mn) mn = v;
-            if (v > mx) mx = v;
+    if constexpr (DT == UK_DT_U8) {
+        return (uint32_t)(r & 0xFFu);
+    } else if constexpr (DT == UK_DT_I8) {
+        return ((uint32_t)(r & 0xFFu)) ^ 0x80u;
+    } else if constexpr (DT == UK_DT_F16 || DT == UK_DT_BF16) {
+        uint32_t b = (uint32_t)(r & 0xFFFFu);
+        uint32_t k = (b & 0x8000u) ? ((~b) & 0xFFFFu) : (b | 0x8000u);
+        if (k == 0x7FFFu) {
+            k = 0x8000u;
         }
-        AscendC::PipeBarrier<PIPE_ALL>();
+        return k;
+    } else if constexpr (DT == UK_DT_I32) {
+        uint32_t k = ((uint32_t)r) ^ 0x80000000u;
+        return k - (uint32_t)minKey;
+    } else if constexpr (DT == UK_DT_I64) {
+        uint64_t k = r ^ 0x8000000000000000ull;
+        return (uint32_t)(k - minKey);
+    } else {
+        uint32_t b = (uint32_t)(r & 0xFFFFFFFFu);
+        uint32_t k = (b & 0x80000000u) ? (~b) : (b | 0x80000000u);
+        if (k == 0x7FFFFFFFu) {
+            k = 0x80000000u;
+        }
+        return k - (uint32_t)minKey;
     }
-
-    auto resL = resBuf.Get<int64_t>();
-    __ubuf__ int64_t *rp = (__ubuf__ int64_t *)resL.GetPhyAddr();
-    rp[0] = mn;
-    rp[1] = mx;
-    AscendC::PipeBarrier<PIPE_ALL>();
-    const int64_t c = static_cast<int64_t>(AscendC::GetBlockIdx());
-    AscendC::DataCopyExtParams cp2{1, 16, 0, 0, 0};
-    AscendC::DataCopyPad(outGm[c * 2], resL, cp2);
 }
 
-__global__ __aicore__ void unique_minmax_final(GM_ADDR in, GM_ADDR out, int32_t nC)
+// inverse transform: reduced code -> element bits
+template <int64_t DT>
+__aicore__ inline uint64_t UkDecode(uint32_t code, uint64_t minKey)
 {
-    AscendC::TPipe pipe;
-    AscendC::GlobalTensor<int64_t> inGm;
-    AscendC::GlobalTensor<int64_t> outGm;
-    inGm.SetGlobalBuffer((__gm__ int64_t *)in);
-    outGm.SetGlobalBuffer((__gm__ int64_t *)out);
+    if constexpr (DT == UK_DT_U8) {
+        return (uint64_t)code;
+    } else if constexpr (DT == UK_DT_I8) {
+        return (uint64_t)(code ^ 0x80u);
+    } else if constexpr (DT == UK_DT_F16 || DT == UK_DT_BF16) {
+        uint32_t k = code;
+        return (uint64_t)((k >= 0x8000u) ? (k - 0x8000u) : ((~k) & 0xFFFFu));
+    } else if constexpr (DT == UK_DT_I32) {
+        uint32_t k = code + (uint32_t)minKey;
+        return (uint64_t)(k ^ 0x80000000u);
+    } else if constexpr (DT == UK_DT_I64) {
+        uint64_t k = (uint64_t)code + minKey;
+        return k ^ 0x8000000000000000ull;
+    } else {
+        uint32_t k = code + (uint32_t)minKey;
+        uint32_t b = (k >= 0x80000000u) ? (k - 0x80000000u) : (~k);
+        return (uint64_t)b;
+    }
+}
 
-    AscendC::TBuf<AscendC::TPosition::VECCALC> buf;
-    pipe.InitBuffer(buf, 8192);
-    auto l = buf.Get<int64_t>();
+__aicore__ inline uint32_t UkPopc(uint32_t x)
+{
+    x = x - ((x >> 1) & 0x55555555u);
+    x = (x & 0x33333333u) + ((x >> 2) & 0x33333333u);
+    x = (x + (x >> 4)) & 0x0F0F0F0Fu;
+    return (uint32_t)((x * 0x01010101u) >> 24);
+}
 
-    AscendC::DataCopyExtParams cp{1, static_cast<uint32_t>(nC * 16), 0, 0, 0};
+__aicore__ inline int64_t UkCtz(uint32_t x)
+{
+    int64_t n = 0;
+    while ((x & 1u) == 0u) {
+        x >>= 1;
+        ++n;
+    }
+    return n;
+}
+
+struct UkPar {
+    int64_t minKey;
+    int64_t cap;
+    int64_t mode;
+    int64_t npass;
+    int64_t d;
+};
+
+__aicore__ inline void UkReadPar(AscendC::TPipe &pipe, GM_ADDR params, UkPar &p)
+{
+    AscendC::TBuf<AscendC::TPosition::VECCALC> b;
+    pipe.InitBuffer(b, 128);
+    AscendC::LocalTensor<int64_t> l = b.Get<int64_t>();
+    AscendC::GlobalTensor<int64_t> g;
+    g.SetGlobalBuffer((__gm__ int64_t *)params);
+    AscendC::DataCopyExtParams cp{1, 64, 0, 0, 0};
     AscendC::DataCopyPadExtParams<int64_t> pp{false, 0, 0, 0};
-    AscendC::DataCopyPad(l, inGm, cp, pp);
-    AscendC::PipeBarrier<PIPE_ALL>();
-
-    __ubuf__ int64_t *p = (__ubuf__ int64_t *)l.GetPhyAddr();
-    int64_t mn = 9223372036854775807LL;
-    int64_t mx = (-9223372036854775807LL - 1);
-    for (int32_t i = 0; i < nC; ++i) {
-        if (p[2 * i] < mn) mn = p[2 * i];
-        if (p[2 * i + 1] > mx) mx = p[2 * i + 1];
-    }
-    p[0] = mn;
-    p[1] = mx;
-    AscendC::PipeBarrier<PIPE_ALL>();
-    AscendC::DataCopyExtParams cp2{1, 16, 0, 0, 0};
-    AscendC::DataCopyPad(outGm, l, cp2);
+    AscendC::DataCopyPad(l, g, cp, pp);
+    AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV7);
+    AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV7);
+    p.minKey = l.GetValue(UK_P_MINKEY);
+    p.cap = l.GetValue(UK_P_CAP);
+    p.mode = l.GetValue(UK_P_MODE);
+    p.npass = l.GetValue(UK_P_NPASS);
+    p.d = l.GetValue(UK_P_D);
 }
 
-// ---------------------------------------------------------------------------
-// presence bitmap (one private region per block)
-// ---------------------------------------------------------------------------
-template <typename T>
-__global__ __aicore__ void unique_bitmap(GM_ADDR x, GM_ADDR bmpOut, GM_ADDR minmax, int64_t numel,
-                                         int64_t blockLen, uint32_t tileElems, uint32_t bmpWords)
+__aicore__ inline int64_t UkMinI64(int64_t a, int64_t b) { return (a < b) ? a : b; }
+
+} // namespace
+
+// ===========================================================================
+// setup kernels
+// ===========================================================================
+
+__global__ __aicore__ void uk_setparams_kernel(GM_ADDR params, int64_t minKey, int64_t cap, int64_t mode,
+                                               int64_t npass, int64_t numBlocks, int64_t blockLength)
 {
+    if (AscendC::GetBlockIdx() != 0) {
+        return;
+    }
     AscendC::TPipe pipe;
-    AscendC::GlobalTensor<T> xGm;
-    AscendC::GlobalTensor<uint32_t> bmpGm;
-    AscendC::GlobalTensor<int64_t> mmGm;
-    xGm.SetGlobalBuffer((__gm__ T *)x);
-    bmpGm.SetGlobalBuffer((__gm__ uint32_t *)bmpOut);
-    mmGm.SetGlobalBuffer((__gm__ int64_t *)minmax);
-
-    AscendC::TBuf<AscendC::TPosition::VECCALC> inBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> bmpBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> mmBuf;
-    pipe.InitBuffer(inBuf, tileElems * sizeof(T));
-    pipe.InitBuffer(bmpBuf, (uint32_t)MAX_BMP_WORDS * 4u);
-    pipe.InitBuffer(mmBuf, 64);
-
-    auto mmL = mmBuf.Get<int64_t>();
-    {
-        AscendC::DataCopyExtParams cp{1, 16, 0, 0, 0};
-        AscendC::DataCopyPadExtParams<int64_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(mmL, mmGm, cp, pp);
-    }
-    AscendC::PipeBarrier<PIPE_ALL>();
-    const int64_t minVal = ((__ubuf__ int64_t *)mmL.GetPhyAddr())[0];
-
-    auto bmpL = bmpBuf.Get<uint32_t>();
-    __ubuf__ uint32_t *bp = (__ubuf__ uint32_t *)bmpL.GetPhyAddr();
-    for (uint32_t w = 0; w < bmpWords; ++w) {
-        bp[w] = 0u;
-    }
-    AscendC::PipeBarrier<PIPE_ALL>();
-
-    const int64_t start = blockLen * static_cast<int64_t>(AscendC::GetBlockIdx());
-    int64_t end = start + blockLen;
-    if (end > numel) end = numel;
-
-    auto inL = inBuf.Get<T>();
-    for (int64_t off = start; off < end; off += static_cast<int64_t>(tileElems)) {
-        int64_t n = end - off;
-        if (n > static_cast<int64_t>(tileElems)) n = static_cast<int64_t>(tileElems);
-        AscendC::DataCopyExtParams cp{1, static_cast<uint32_t>(n * (int64_t)sizeof(T)), 0, 0, 0};
-        AscendC::DataCopyPadExtParams<T> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(inL, xGm[off], cp, pp);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        __ubuf__ T *xp = (__ubuf__ T *)inL.GetPhyAddr();
-        for (int64_t i = 0; i < n; ++i) {
-            uint32_t b = BinOf<T>(xp[i], minVal);
-            bp[b >> 5] |= (1u << (b & 31u));
-        }
-        AscendC::PipeBarrier<PIPE_ALL>();
-    }
-
-    const int64_t c = static_cast<int64_t>(AscendC::GetBlockIdx());
-    AscendC::DataCopyExtParams cp2{1, bmpWords * 4u, 0, 0, 0};
-    AscendC::DataCopyPad(bmpGm[c * static_cast<int64_t>(bmpWords)], bmpL, cp2);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> b;
+    pipe.InitBuffer(b, 128);
+    AscendC::LocalTensor<int64_t> l = b.Get<int64_t>();
+    l.SetValue(UK_P_MINKEY, minKey);
+    l.SetValue(UK_P_CAP, cap);
+    l.SetValue(UK_P_MODE, mode);
+    l.SetValue(UK_P_NPASS, npass);
+    l.SetValue(UK_P_D, (int64_t)0);
+    l.SetValue(UK_P_NUMBLK, numBlocks);
+    l.SetValue(UK_P_BLOCKLEN, blockLength);
+    AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV0);
+    AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV0);
+    AscendC::GlobalTensor<int64_t> g;
+    g.SetGlobalBuffer((__gm__ int64_t *)params);
+    AscendC::DataCopyExtParams cp{1, (uint32_t)(8 * 8), 0, 0, 0};
+    AscendC::DataCopyPad(g, l, cp);
 }
 
-// ---------------------------------------------------------------------------
-// OR merge of the per block bitmaps into one global bitmap
-// ---------------------------------------------------------------------------
-__global__ __aicore__ void unique_merge(GM_ADDR in, GM_ADDR out, int32_t nC, uint32_t bmpWords)
+// per core min / max of the raw integer values; the tile is staged as 32-bit words so no
+// wide UB element type is ever needed
+template <typename IT>
+__global__ __aicore__ void uk_mm_kernel(GM_ADDR x, GM_ADDR mm, int64_t n, int64_t blockLength)
 {
-    AscendC::TPipe pipe;
-    AscendC::GlobalTensor<uint32_t> inGm;
-    AscendC::GlobalTensor<uint32_t> outGm;
-    inGm.SetGlobalBuffer((__gm__ uint32_t *)in);
-    outGm.SetGlobalBuffer((__gm__ uint32_t *)out);
-
-    AscendC::TBuf<AscendC::TPosition::VECCALC> accBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> tmpBuf;
-    pipe.InitBuffer(accBuf, (uint32_t)MAX_BMP_WORDS * 4u);
-    pipe.InitBuffer(tmpBuf, (uint32_t)MAX_BMP_WORDS * 4u);
-
-    auto accL = accBuf.Get<uint32_t>();
-    auto tmpL = tmpBuf.Get<uint32_t>();
-    __ubuf__ uint32_t *ap = (__ubuf__ uint32_t *)accL.GetPhyAddr();
-
-    for (uint32_t w = 0; w < bmpWords; ++w) {
-        ap[w] = 0u;
+    constexpr int64_t WPE = (int64_t)sizeof(IT) / 4; // 32-bit words per element (1 or 2)
+    int64_t blk = AscendC::GetBlockIdx();
+    int64_t start = blk * blockLength;
+    int64_t cnt = n - start;
+    if (cnt > blockLength) {
+        cnt = blockLength;
     }
-    AscendC::PipeBarrier<PIPE_ALL>();
+    if (cnt < 0) {
+        cnt = 0;
+    }
 
-    for (int32_t c = 0; c < nC; ++c) {
-        AscendC::DataCopyExtParams cp{1, bmpWords * 4u, 0, 0, 0};
+    AscendC::TPipe pipe;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> b;
+    pipe.InitBuffer(b, UK_TILE * 8 + 256);
+    AscendC::LocalTensor<uint32_t> tl = b.Get<uint32_t>();
+    AscendC::GlobalTensor<uint32_t> xg;
+    xg.SetGlobalBuffer((__gm__ uint32_t *)x);
+
+    int64_t mn = 0;
+    int64_t mx = 0;
+    bool first = true;
+    for (int64_t off = 0; off < cnt; off += UK_TILE) {
+        int64_t len = UkMinI64(cnt - off, UK_TILE);
+        int64_t words = len * WPE;
+        AscendC::DataCopyExtParams cp{1, (uint32_t)(words * 4), 0, 0, 0};
         AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(tmpL, inGm[static_cast<int64_t>(c) * static_cast<int64_t>(bmpWords)], cp, pp);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        __ubuf__ uint32_t *tp = (__ubuf__ uint32_t *)tmpL.GetPhyAddr();
-        for (uint32_t w = 0; w < bmpWords; ++w) {
-            ap[w] |= tp[w];
-        }
-        AscendC::PipeBarrier<PIPE_ALL>();
-    }
-
-    AscendC::DataCopyExtParams cp2{1, bmpWords * 4u, 0, 0, 0};
-    AscendC::DataCopyPad(outGm, accL, cp2);
-}
-
-// ---------------------------------------------------------------------------
-// number of distinct values (+ whether -0.0 had to be merged into +0.0)
-// ---------------------------------------------------------------------------
-template <typename T>
-__global__ __aicore__ void unique_count(GM_ADDR bmp, GM_ADDR wsK, uint32_t bmpWords)
-{
-    AscendC::TPipe pipe;
-    AscendC::GlobalTensor<uint32_t> bmpGm;
-    AscendC::GlobalTensor<int64_t> kGm;
-    bmpGm.SetGlobalBuffer((__gm__ uint32_t *)bmp);
-    kGm.SetGlobalBuffer((__gm__ int64_t *)wsK);
-
-    AscendC::TBuf<AscendC::TPosition::VECCALC> bmpBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> outBuf;
-    pipe.InitBuffer(bmpBuf, (uint32_t)MAX_BMP_WORDS * 4u);
-    pipe.InitBuffer(outBuf, 64);
-
-    auto bmpL = bmpBuf.Get<uint32_t>();
-    AscendC::DataCopyExtParams cp{1, bmpWords * 4u, 0, 0, 0};
-    AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
-    AscendC::DataCopyPad(bmpL, bmpGm, cp, pp);
-    AscendC::PipeBarrier<PIPE_ALL>();
-    __ubuf__ uint32_t *bp = (__ubuf__ uint32_t *)bmpL.GetPhyAddr();
-
-    int32_t neg0, pos0;
-    ZeroMergeBins<T>(neg0, pos0);
-    int64_t merged = 0;
-    if (neg0 >= 0) {
-        uint32_t nb = (bp[(uint32_t)neg0 >> 5] >> ((uint32_t)neg0 & 31u)) & 1u;
-        uint32_t pb = (bp[(uint32_t)pos0 >> 5] >> ((uint32_t)pos0 & 31u)) & 1u;
-        if (nb != 0u && pb != 0u) merged = 1;
-    }
-
-    int64_t k = 0;
-    for (uint32_t w = 0; w < bmpWords; ++w) {
-        k += (int64_t)Popc32(bp[w]);
-    }
-    k -= merged;
-
-    auto outL = outBuf.Get<int64_t>();
-    __ubuf__ int64_t *op = (__ubuf__ int64_t *)outL.GetPhyAddr();
-    op[0] = k;
-    op[1] = merged;
-    AscendC::PipeBarrier<PIPE_ALL>();
-    AscendC::DataCopyExtParams cp2{1, 16, 0, 0, 0};
-    AscendC::DataCopyPad(kGm, outL, cp2);
-}
-
-// ---------------------------------------------------------------------------
-// inverse index: inverse[i] = rank(bin(x[i]))
-// ---------------------------------------------------------------------------
-template <typename T>
-__global__ __aicore__ void unique_inverse(GM_ADDR x, GM_ADDR inverse, GM_ADDR bmp, GM_ADDR wsK,
-                                          GM_ADDR minmax, int64_t numel, int64_t blockLen,
-                                          uint32_t tileElems, uint32_t bmpWords)
-{
-    AscendC::TPipe pipe;
-    AscendC::GlobalTensor<T> xGm;
-    AscendC::GlobalTensor<int64_t> invGm;
-    AscendC::GlobalTensor<uint32_t> bmpGm;
-    AscendC::GlobalTensor<int64_t> kGm;
-    AscendC::GlobalTensor<int64_t> mmGm;
-    xGm.SetGlobalBuffer((__gm__ T *)x);
-    invGm.SetGlobalBuffer((__gm__ int64_t *)inverse);
-    bmpGm.SetGlobalBuffer((__gm__ uint32_t *)bmp);
-    kGm.SetGlobalBuffer((__gm__ int64_t *)wsK);
-    mmGm.SetGlobalBuffer((__gm__ int64_t *)minmax);
-
-    AscendC::TBuf<AscendC::TPosition::VECCALC> inBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> outBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> bmpBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> pwBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> kBug;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> mmBuf;
-    pipe.InitBuffer(inBuf, tileElems * sizeof(T));
-    pipe.InitBuffer(outBuf, tileElems * sizeof(int64_t));
-    pipe.InitBuffer(bmpBuf, (uint32_t)MAX_BMP_WORDS * 4u);
-    pipe.InitBuffer(pwBuf, (uint32_t)MAX_BMP_WORDS * 4u);
-    pipe.InitBuffer(kBug, 64);
-    pipe.InitBuffer(mmBuf, 64);
-
-    auto bmpL = bmpBuf.Get<uint32_t>();
-    {
-        AscendC::DataCopyExtParams cp{1, bmpWords * 4u, 0, 0, 0};
-        AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(bmpL, bmpGm, cp, pp);
-    }
-    auto kL = kBug.Get<int64_t>();
-    {
-        AscendC::DataCopyExtParams cp{1, 16, 0, 0, 0};
-        AscendC::DataCopyPadExtParams<int64_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(kL, kGm, cp, pp);
-    }
-    auto mmL = mmBuf.Get<int64_t>();
-    {
-        AscendC::DataCopyExtParams cp{1, 16, 0, 0, 0};
-        AscendC::DataCopyPadExtParams<int64_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(mmL, mmGm, cp, pp);
-    }
-    AscendC::PipeBarrier<PIPE_ALL>();
-
-    __ubuf__ uint32_t *bp = (__ubuf__ uint32_t *)bmpL.GetPhyAddr();
-    const int64_t merged = ((__ubuf__ int64_t *)kL.GetPhyAddr())[1];
-    const int64_t minVal = ((__ubuf__ int64_t *)mmL.GetPhyAddr())[0];
-
-    int32_t neg0, pos0;
-    ZeroMergeBins<T>(neg0, pos0);
-
-    // prefix popcount of the bitmap
-    auto pwL = pwBuf.Get<uint32_t>();
-    __ubuf__ uint32_t *pw = (__ubuf__ uint32_t *)pwL.GetPhyAddr();
-    uint32_t run = 0;
-    for (uint32_t w = 0; w < bmpWords; ++w) {
-        pw[w] = run;
-        uint32_t word = bp[w];
-        if (merged != 0 && neg0 >= 0 && ((uint32_t)neg0 >> 5) == w) {
-            word &= ~(1u << ((uint32_t)neg0 & 31u));
-        }
-        run += Popc32(word);
-    }
-    AscendC::PipeBarrier<PIPE_ALL>();
-
-    const int64_t start = blockLen * static_cast<int64_t>(AscendC::GetBlockIdx());
-    int64_t end = start + blockLen;
-    if (end > numel) end = numel;
-
-    auto inL = inBuf.Get<T>();
-    auto outL = outBuf.Get<int64_t>();
-    for (int64_t off = start; off < end; off += static_cast<int64_t>(tileElems)) {
-        int64_t n = end - off;
-        if (n > static_cast<int64_t>(tileElems)) n = static_cast<int64_t>(tileElems);
-        AscendC::DataCopyExtParams cp{1, static_cast<uint32_t>(n * (int64_t)sizeof(T)), 0, 0, 0};
-        AscendC::DataCopyPadExtParams<T> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(inL, xGm[off], cp, pp);
-        AscendC::PipeBarrier<PIPE_ALL>();
-
-        __ubuf__ T *xp = (__ubuf__ T *)inL.GetPhyAddr();
-        __ubuf__ int64_t *op = (__ubuf__ int64_t *)outL.GetPhyAddr();
-        for (int64_t i = 0; i < n; ++i) {
-            uint32_t b = BinOf<T>(xp[i], minVal);
-            if (merged != 0 && neg0 >= 0 && b == (uint32_t)neg0) {
-                b = (uint32_t)pos0;
+        AscendC::DataCopyPad(tl, xg[(start + off) * WPE], cp, pp);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+        for (int64_t i = 0; i < len; ++i) {
+            int64_t v;
+            if constexpr (WPE == 2) {
+                uint64_t lo = (uint64_t)tl.GetValue(2 * i);
+                uint64_t hi = (uint64_t)tl.GetValue(2 * i + 1);
+                v = (int64_t)(lo | (hi << 32));
+            } else {
+                v = (int64_t)(int32_t)tl.GetValue(i);
             }
-            uint32_t w = b >> 5;
-            uint32_t s = b & 31u;
-            uint32_t mask = (s == 0u) ? 0u : ((1u << s) - 1u);
-            uint32_t r = pw[w] + Popc32(bp[w] & mask);
-            op[i] = (int64_t)r;
-        }
-        AscendC::PipeBarrier<PIPE_ALL>();
-
-        AscendC::DataCopyExtParams cp2{1, static_cast<uint32_t>(n * (int64_t)sizeof(int64_t)), 0, 0, 0};
-        AscendC::DataCopyPad(invGm[off], outL, cp2);
-        AscendC::PipeBarrier<PIPE_ALL>();
-    }
-}
-
-// ---------------------------------------------------------------------------
-// y output: y[rank(b)] = value(b) for every present b
-// ---------------------------------------------------------------------------
-template <typename T>
-__global__ __aicore__ void unique_emit(GM_ADDR y, GM_ADDR minmax, GM_ADDR bmp, GM_ADDR wsK,
-                                       uint32_t bmpWords)
-{
-    AscendC::TPipe pipe;
-    AscendC::GlobalTensor<T> yGm;
-    AscendC::GlobalTensor<uint32_t> bmpGm;
-    AscendC::GlobalTensor<int64_t> mmGm;
-    AscendC::GlobalTensor<int64_t> kGm;
-    yGm.SetGlobalBuffer((__gm__ T *)y);
-    bmpGm.SetGlobalBuffer((__gm__ uint32_t *)bmp);
-    mmGm.SetGlobalBuffer((__gm__ int64_t *)minmax);
-    kGm.SetGlobalBuffer((__gm__ int64_t *)wsK);
-
-    AscendC::TBuf<AscendC::TPosition::VECCALC> bmpBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> outBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> mmBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> kBug;
-    pipe.InitBuffer(bmpBuf, (uint32_t)MAX_BMP_WORDS * 4u);
-    pipe.InitBuffer(outBuf, (uint32_t)EMIT_CHUNK * sizeof(T));
-    pipe.InitBuffer(mmBuf, 64);
-    pipe.InitBuffer(kBug, 64);
-
-    auto bmpL = bmpBuf.Get<uint32_t>();
-    {
-        AscendC::DataCopyExtParams cp{1, bmpWords * 4u, 0, 0, 0};
-        AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(bmpL, bmpGm, cp, pp);
-    }
-    auto mmL = mmBuf.Get<int64_t>();
-    {
-        AscendC::DataCopyExtParams cp{1, 16, 0, 0, 0};
-        AscendC::DataCopyPadExtParams<int64_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(mmL, mmGm, cp, pp);
-    }
-    auto kL = kBug.Get<int64_t>();
-    {
-        AscendC::DataCopyExtParams cp{1, 16, 0, 0, 0};
-        AscendC::DataCopyPadExtParams<int64_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(kL, kGm, cp, pp);
-    }
-    AscendC::PipeBarrier<PIPE_ALL>();
-
-    __ubuf__ uint32_t *bp = (__ubuf__ uint32_t *)bmpL.GetPhyAddr();
-    const int64_t minVal = ((__ubuf__ int64_t *)mmL.GetPhyAddr())[0];
-    const int64_t maxVal = ((__ubuf__ int64_t *)mmL.GetPhyAddr())[1];
-    const int64_t merged = ((__ubuf__ int64_t *)kL.GetPhyAddr())[1];
-
-    int32_t neg0, pos0;
-    ZeroMergeBins<T>(neg0, pos0);
-    const int64_t binCount = BinCountOf<T>(minVal, maxVal);
-
-    auto outL = outBuf.Get<T>();
-    __ubuf__ T *op = (__ubuf__ T *)outL.GetPhyAddr();
-    int32_t fill = 0;
-    int64_t emitted = 0;
-    for (int64_t b = 0; b < binCount; ++b) {
-        uint32_t ub = (uint32_t)b;
-        uint32_t bit = (bp[ub >> 5] >> (ub & 31u)) & 1u;
-        if (bit == 0u) {
-            continue;
-        }
-        if (merged != 0 && neg0 >= 0 && ub == (uint32_t)neg0) {
-            continue;
-        }
-        op[fill] = UnmapOf<T>(ub, minVal);
-        ++fill;
-        ++emitted;
-        if (fill == EMIT_CHUNK) {
-            AscendC::PipeBarrier<PIPE_ALL>();
-            AscendC::DataCopyExtParams cp{1, (uint32_t)EMIT_CHUNK * (uint32_t)sizeof(T), 0, 0, 0};
-            AscendC::DataCopyPad(yGm[emitted - (int64_t)EMIT_CHUNK], outL, cp);
-            AscendC::PipeBarrier<PIPE_ALL>();
-            fill = 0;
-        }
-    }
-    if (fill > 0) {
-        AscendC::PipeBarrier<PIPE_ALL>();
-        AscendC::DataCopyExtParams cp{1, (uint32_t)fill * (uint32_t)sizeof(T), 0, 0, 0};
-        AscendC::DataCopyPad(yGm[emitted - (int64_t)fill], outL, cp);
-        AscendC::PipeBarrier<PIPE_ALL>();
-    }
-}
-
-// ---------------------------------------------------------------------------
-// launchers
-// ---------------------------------------------------------------------------
-template <typename T>
-void LaunchStage1(GM_ADDR x, GM_ADDR inverse, GM_ADDR wsPart, GM_ADDR wsMM, GM_ADDR wsBmpCore,
-                  GM_ADDR wsBmpGlobal, GM_ADDR wsK, int64_t numel, int64_t numBlocks, int64_t blockLen,
-                  uint32_t tileElems, uint32_t bmpWords, int64_t needInverse, void *stream)
-{
-    if constexpr (std::is_same<T, int32_t>::value || std::is_same<T, int64_t>::value) {
-        unique_minmax_partial<T><<<numBlocks, nullptr, stream>>>(x, wsPart, numel, blockLen, tileElems);
-        unique_minmax_final<<<1, nullptr, stream>>>(wsPart, wsMM, (int32_t)numBlocks);
-    }
-    unique_bitmap<T><<<numBlocks, nullptr, stream>>>(x, wsBmpCore, wsMM, numel, blockLen, tileElems, bmpWords);
-    unique_merge<<<1, nullptr, stream>>>(wsBmpCore, wsBmpGlobal, (int32_t)numBlocks, bmpWords);
-    unique_count<T><<<1, nullptr, stream>>>(wsBmpGlobal, wsK, bmpWords);
-    if (needInverse != 0) {
-        unique_inverse<T><<<numBlocks, nullptr, stream>>>(x, inverse, wsBmpGlobal, wsK, wsMM, numel,
-                                                          blockLen, tileElems, bmpWords);
-    }
-}
-
-template <typename T>
-void LaunchEmit(GM_ADDR y, GM_ADDR wsMM, GM_ADDR wsBmpGlobal, GM_ADDR wsK, uint32_t bmpWords, void *stream)
-{
-    unique_emit<T><<<1, nullptr, stream>>>(y, wsMM, wsBmpGlobal, wsK, bmpWords);
-}
-
-// ---------------------------------------------------------------------------
-// float32 route: sharded dense presence bitmap over the monotone 32 bit key
-// ---------------------------------------------------------------------------
-namespace f32impl {
-
-constexpr int64_t KEY_BLK = 16;        // bitmap words per prefix block (512 keys)
-constexpr int32_t WTILE = 4096;        // bitmap words per DMA tile in the scan kernels
-constexpr int32_t ETILE = 2048;        // values buffered per y flush
-constexpr uint32_t NEG0_KEY = 0x7FFFFFFFu;
-constexpr uint32_t POS0_KEY = 0x80000000u;
-
-__aicore__ inline uint32_t KeyOfBits(uint32_t b)
-{
-    uint32_t mask = (b & 0x80000000u) ? 0xFFFFFFFFu : 0x80000000u;
-    return (b | mask) - (b & mask);
-}
-
-__aicore__ inline uint32_t BitsOfKey(uint32_t k)
-{
-    return (k & 0x80000000u) ? (k - 0x80000000u) : (k ^ 0xFFFFFFFFu);
-}
-
-__aicore__ inline float ValOfKey(uint32_t k)
-{
-    uint32_t b = BitsOfKey(k);
-    return *reinterpret_cast<float *>(&b);
-}
-
-}  // namespace f32impl
-
-using namespace f32impl;
-
-// per block key min/max
-__global__ __aicore__ void unique_f32_keymin(GM_ADDR x, GM_ADDR out, int64_t numel, int64_t blockLen,
-                                             uint32_t tileElems)
-{
-    AscendC::TPipe pipe;
-    AscendC::GlobalTensor<uint32_t> xGm;
-    AscendC::GlobalTensor<int64_t> outGm;
-    xGm.SetGlobalBuffer((__gm__ uint32_t *)x);
-    outGm.SetGlobalBuffer((__gm__ int64_t *)out);
-
-    AscendC::TBuf<AscendC::TPosition::VECCALC> inBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> resBuf;
-    pipe.InitBuffer(inBuf, tileElems * 4u);
-    pipe.InitBuffer(resBuf, 64);
-
-    const int64_t c = (int64_t)AscendC::GetBlockIdx();
-    int64_t start = blockLen * c;
-    int64_t end = start + blockLen;
-    if (end > numel) end = numel;
-    uint32_t kmin = 0xFFFFFFFFu;
-    uint32_t kmax = 0u;
-    auto inL = inBuf.Get<uint32_t>();
-    for (int64_t off = start; off < end; off += (int64_t)tileElems) {
-        int64_t n = end - off;
-        if (n > (int64_t)tileElems) n = (int64_t)tileElems;
-        AscendC::DataCopyExtParams cp{1, (uint32_t)(n * 4), 0, 0, 0};
-        AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(inL, xGm[off], cp, pp);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        __ubuf__ uint32_t *p = (__ubuf__ uint32_t *)inL.GetPhyAddr();
-        for (int64_t i = 0; i < n; ++i) {
-            uint32_t k = KeyOfBits(p[i]);
-            if (k < kmin) kmin = k;
-            if (k > kmax) kmax = k;
-        }
-    }
-    auto resL = resBuf.Get<int64_t>();
-    __ubuf__ int64_t *op = (__ubuf__ int64_t *)resL.GetPhyAddr();
-    op[0] = (int64_t)kmin;
-    op[1] = (int64_t)kmax;
-    AscendC::PipeBarrier<PIPE_ALL>();
-    AscendC::DataCopyExtParams cp2{1, 16, 0, 0, 0};
-    AscendC::DataCopyPad(outGm[c * 2], resL, cp2);
-}
-
-// core c owns the key shard [keyMin + c*shardWords*32, +shardWords*32) and scans the whole input,
-// setting the presence bits of the elements that fall into its shard (disjoint regions -> no races).
-// It also reports the number of distinct keys it found in the shard.
-__global__ __aicore__ void unique_f32_shard_bitset(GM_ADDR x, GM_ADDR bmp, GM_ADDR mm, GM_ADDR cnt,
-                                                   int64_t numel, uint32_t tileElems, int64_t shardWords)
-{
-    AscendC::TPipe pipe;
-    AscendC::GlobalTensor<uint32_t> xGm;
-    AscendC::GlobalTensor<uint32_t> bmpGm;
-    AscendC::GlobalTensor<int64_t> mmGm;
-    AscendC::GlobalTensor<int64_t> cntGm;
-    xGm.SetGlobalBuffer((__gm__ uint32_t *)x);
-    bmpGm.SetGlobalBuffer((__gm__ uint32_t *)bmp);
-    mmGm.SetGlobalBuffer((__gm__ int64_t *)mm);
-    cntGm.SetGlobalBuffer((__gm__ int64_t *)cnt);
-
-    AscendC::TBuf<AscendC::TPosition::VECCALC> inBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> mmBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> resBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> zBuf;
-    pipe.InitBuffer(inBuf, tileElems * 4u);
-    pipe.InitBuffer(mmBuf, 64);
-    pipe.InitBuffer(resBuf, 64);
-    pipe.InitBuffer(zBuf, 4096 * 4u);
-
-    auto mmL = mmBuf.Get<int64_t>();
-    {
-        AscendC::DataCopyExtParams cp{1, 16, 0, 0, 0};
-        AscendC::DataCopyPadExtParams<int64_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(mmL, mmGm, cp, pp);
-    }
-    AscendC::PipeBarrier<PIPE_ALL>();
-    const int64_t keyMin = ((__ubuf__ int64_t *)mmL.GetPhyAddr())[0];
-
-    const int64_t c = (int64_t)AscendC::GetBlockIdx();
-    const int64_t shardLo = keyMin + c * shardWords * 32;
-    const int64_t shardHi = shardLo + shardWords * 32;
-    const int64_t bmpBase = c * shardWords;
-    int64_t hits = 0;
-
-    // This block owns the whole shard region, so it can zero it before setting any bit: the bitmap is
-    // allocated with empty() and must not rely on the content of fresh device memory.
-    {
-        auto zL = zBuf.Get<uint32_t>();
-        AscendC::Duplicate(zL, (uint32_t)0, 4096);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        for (int64_t off = 0; off < shardWords; off += 4096) {
-            int64_t nw = shardWords - off;
-            if (nw > 4096) nw = 4096;
-            AscendC::DataCopyExtParams cz{1, (uint32_t)(nw * 4), 0, 0, 0};
-            AscendC::DataCopyPad(bmpGm[bmpBase + off], zL, cz);
-        }
-        AscendC::PipeBarrier<PIPE_ALL>();
-    }
-
-    auto inL = inBuf.Get<uint32_t>();
-    for (int64_t off = 0; off < numel; off += (int64_t)tileElems) {
-        int64_t n = numel - off;
-        if (n > (int64_t)tileElems) n = (int64_t)tileElems;
-        AscendC::DataCopyExtParams cp{1, (uint32_t)(n * 4), 0, 0, 0};
-        AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(inL, xGm[off], cp, pp);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        __ubuf__ uint32_t *p = (__ubuf__ uint32_t *)inL.GetPhyAddr();
-        for (int64_t i = 0; i < n; ++i) {
-            uint32_t k = KeyOfBits(p[i]);
-            if ((int64_t)k >= shardLo && (int64_t)k < shardHi) {
-                int64_t delta = (int64_t)k - shardLo;
-                uint32_t w = (uint32_t)(bmpBase + (delta >> 5));
-                uint32_t bit = 1u << (uint32_t)(delta & 31);
-                uint32_t cur = bmpGm.GetValue(w);
-                if ((cur & bit) == 0u) {
-                    bmpGm.SetValue(w, cur | bit);
-                    ++hits;
+            if (first) {
+                mn = v;
+                mx = v;
+                first = false;
+            } else {
+                if (v < mn) {
+                    mn = v;
+                }
+                if (v > mx) {
+                    mx = v;
                 }
             }
         }
-        AscendC::PipeBarrier<PIPE_ALL>();
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(UK_EV0);
     }
 
-    auto resL = resBuf.Get<int64_t>();
-    ((__ubuf__ int64_t *)resL.GetPhyAddr())[0] = hits;
-    AscendC::PipeBarrier<PIPE_ALL>();
-    AscendC::DataCopyExtParams cp2{1, 8, 0, 0, 0};
-    AscendC::DataCopyPad(cntGm[c], resL, cp2);
+    AscendC::LocalTensor<int64_t> ol = b.Get<int64_t>();
+    ol.SetValue(0, mn);
+    ol.SetValue(1, mx);
+    AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV2);
+    AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV2);
+    AscendC::GlobalTensor<int64_t> mg;
+    mg.SetGlobalBuffer((__gm__ int64_t *)mm);
+    AscendC::DataCopyExtParams cp2{1, 16, 0, 0, 0};
+    AscendC::DataCopyPad(mg[blk * 2], ol, cp2);
 }
 
-// single core: exclusive prefix of the per shard distinct counts -> bases, total distinct -> K and
-// the -0.0 / +0.0 merge flag (the two keys are adjacent, so they share at most two bitmap words).
-__global__ __aicore__ void unique_f32_shard_scan(GM_ADDR cnt, GM_ADDR base, GM_ADDR wsK, GM_ADDR mm,
-                                                 GM_ADDR bmp, int64_t nShards, int64_t keyMin,
-                                                 int64_t words)
+// cross core reduce of the integer min/max and reduced-range decision
+__global__ __aicore__ void uk_prep_kernel(GM_ADDR mm, GM_ADDR params, int64_t numBlocks, int64_t dt)
 {
+    if (AscendC::GetBlockIdx() != 0) {
+        return;
+    }
     AscendC::TPipe pipe;
-    AscendC::GlobalTensor<int64_t> cntGm;
-    AscendC::GlobalTensor<int64_t> baseGm;
-    AscendC::GlobalTensor<int64_t> kGm;
-    AscendC::GlobalTensor<int64_t> mmGm;
-    AscendC::GlobalTensor<uint32_t> bmpGm;
-    cntGm.SetGlobalBuffer((__gm__ int64_t *)cnt);
-    baseGm.SetGlobalBuffer((__gm__ int64_t *)base);
-    kGm.SetGlobalBuffer((__gm__ int64_t *)wsK);
-    mmGm.SetGlobalBuffer((__gm__ int64_t *)mm);
-    bmpGm.SetGlobalBuffer((__gm__ uint32_t *)bmp);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> b;
+    pipe.InitBuffer(b, 8192);
+    AscendC::LocalTensor<int64_t> l = b.Get<int64_t>();
+    AscendC::GlobalTensor<int64_t> g;
+    g.SetGlobalBuffer((__gm__ int64_t *)mm);
+    uint32_t nv = (uint32_t)(numBlocks * 2);
+    AscendC::DataCopyExtParams cp{1, (uint32_t)(nv * 8), 0, 0, 0};
+    AscendC::DataCopyPadExtParams<int64_t> pp{false, 0, 0, 0};
+    AscendC::DataCopyPad(l, g, cp, pp);
+    AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+    AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
 
-    AscendC::TBuf<AscendC::TPosition::VECCALC> bBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> mmBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> wBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> outBuf;
-    pipe.InitBuffer(bBuf, 4096);
-    pipe.InitBuffer(mmBuf, 64);
-    pipe.InitBuffer(wBuf, 64);
-    pipe.InitBuffer(outBuf, 64);
-
-    auto bL = bBuf.Get<int64_t>();
-    {
-        AscendC::DataCopyExtParams cp{1, (uint32_t)(nShards * 8), 0, 0, 0};
-        AscendC::DataCopyPadExtParams<int64_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(bL, cntGm, cp, pp);
-    }
-    auto mmL = mmBuf.Get<int64_t>();
-    {
-        AscendC::DataCopyExtParams cp{1, 16, 0, 0, 0};
-        AscendC::DataCopyPadExtParams<int64_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(mmL, mmGm, cp, pp);
-    }
-    AscendC::PipeBarrier<PIPE_ALL>();
-    __ubuf__ int64_t *cp32 = (__ubuf__ int64_t *)bL.GetPhyAddr();
-    const int64_t kmin = ((__ubuf__ int64_t *)mmL.GetPhyAddr())[0];
-    const int64_t span = words * 32;
-
-    int64_t cum = 0;
-    for (int64_t i = 0; i < nShards; ++i) {
-        int64_t v = cp32[i];
-        cp32[i] = cum;
-        cum += v;
-    }
-    auto outL = outBuf.Get<int64_t>();
-    auto wL = wBuf.Get<uint32_t>();
-
-    // merge detection: -0.0 key (0x7FFFFFFF) and +0.0 key (0x80000000)
-    const int64_t pNeg = (int64_t)NEG0_KEY - kmin;
-    const int64_t pPos = (int64_t)POS0_KEY - kmin;
-    int64_t merged = 0;
-    if (pNeg >= 0 && pNeg + 1 < span && pPos >= 0 && pPos < span) {
-        const int64_t wN = pNeg >> 5;
-        const int64_t wP = pPos >> 5;
-        const int64_t w0 = (wN < wP) ? wN : wP;
-        const int64_t nw = (wP - w0) + 1;
-        AscendC::DataCopyExtParams cp{1, (uint32_t)(nw * 4), 0, 0, 0};
-        AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(wL, bmpGm[w0], cp, pp);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        __ubuf__ uint32_t *wp = (__ubuf__ uint32_t *)wL.GetPhyAddr();
-        uint32_t nb = (wp[(int64_t)(wN - w0)] >> (uint32_t)(pNeg & 31)) & 1u;
-        uint32_t pb = (wp[(int64_t)(wP - w0)] >> (uint32_t)(pPos & 31)) & 1u;
-        if (nb != 0u && pb != 0u) {
-            merged = 1;
+    int64_t mnVal = l.GetValue(0);
+    int64_t mxVal = l.GetValue(1);
+    for (int64_t i = 1; i < numBlocks; ++i) {
+        int64_t a = l.GetValue(i * 2);
+        int64_t c = l.GetValue(i * 2 + 1);
+        if (a < mnVal) {
+            mnVal = a;
+        }
+        if (c > mxVal) {
+            mxVal = c;
         }
     }
 
-    __ubuf__ int64_t *op = (__ubuf__ int64_t *)outL.GetPhyAddr();
-    op[0] = cum - merged;
-    op[1] = merged;
-    AscendC::PipeBarrier<PIPE_ALL>();
-    {
-        AscendC::DataCopyExtParams cp{1, (uint32_t)(nShards * 8), 0, 0, 0};
-        AscendC::DataCopyPad(baseGm, bL, cp);
+    uint64_t minKey;
+    uint64_t maxKey;
+    if (dt == UK_DT_I32) {
+        minKey = (uint64_t)(((uint32_t)mnVal) ^ 0x80000000u);
+        maxKey = (uint64_t)(((uint32_t)mxVal) ^ 0x80000000u);
+    } else {
+        minKey = ((uint64_t)mnVal) ^ 0x8000000000000000ull;
+        maxKey = ((uint64_t)mxVal) ^ 0x8000000000000000ull;
     }
-    AscendC::PipeBarrier<PIPE_ALL>();
-    {
-        AscendC::DataCopyExtParams cp{1, 16, 0, 0, 0};
-        AscendC::DataCopyPad(kGm, outL, cp);
+    uint64_t cap = maxKey - minKey + 1ull;
+    if (cap == 0ull) {
+        cap = ~0ull;
     }
-}
-
-// core c walks its own shard bitmap and writes the exclusive prefix count at every KEY_BLK boundary.
-__global__ __aicore__ void unique_f32_prefix(GM_ADDR bmp, GM_ADDR base, GM_ADDR prefix,
-                                             int64_t shardWords)
-{
-    AscendC::TPipe pipe;
-    AscendC::GlobalTensor<uint32_t> bmpGm;
-    AscendC::GlobalTensor<int64_t> baseGm;
-    AscendC::GlobalTensor<int32_t> preGm;
-    bmpGm.SetGlobalBuffer((__gm__ uint32_t *)bmp);
-    baseGm.SetGlobalBuffer((__gm__ int64_t *)base);
-    preGm.SetGlobalBuffer((__gm__ int32_t *)prefix);
-
-    AscendC::TBuf<AscendC::TPosition::VECCALC> wBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> oBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> bBuf;
-    pipe.InitBuffer(wBuf, WTILE * 4u);
-    pipe.InitBuffer(oBuf, (WTILE / 16) * 4u + 64);
-    pipe.InitBuffer(bBuf, 64);
-
-    auto bL = bBuf.Get<int64_t>();
-    const int64_t c = (int64_t)AscendC::GetBlockIdx();
-    {
-        AscendC::DataCopyExtParams cp{1, 8, 0, 0, 0};
-        AscendC::DataCopyPadExtParams<int64_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(bL, baseGm[c], cp, pp);
-    }
-    AscendC::PipeBarrier<PIPE_ALL>();
-    int64_t run = ((__ubuf__ int64_t *)bL.GetPhyAddr())[0];
-
-    const int64_t wStart = c * shardWords;
-    const int64_t nBlocks = shardWords / 16;
-    auto wL = wBuf.Get<uint32_t>();
-    auto oL = oBuf.Get<int32_t>();
-    for (int64_t b = 0; b < nBlocks; b += (int64_t)(WTILE / 16)) {
-        int64_t nb = nBlocks - b;
-        if (nb > (int64_t)(WTILE / 16)) nb = (int64_t)(WTILE / 16);
-        int64_t nw = nb * 16;
-        AscendC::DataCopyExtParams cp{1, (uint32_t)(nw * 4), 0, 0, 0};
-        AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(wL, bmpGm[wStart + b * 16], cp, pp);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        __ubuf__ uint32_t *wp = (__ubuf__ uint32_t *)wL.GetPhyAddr();
-        __ubuf__ int32_t *op = (__ubuf__ int32_t *)oL.GetPhyAddr();
-        for (int64_t j = 0; j < nb; ++j) {
-            op[j] = (int32_t)run;
-            int64_t s = 0;
-            for (int64_t t = 0; t < 16; ++t) s += (int64_t)Popc32(wp[j * 16 + t]);
-            run += s;
+    int64_t mode = (cap <= (uint64_t)UK_MAXCAP) ? 0 : 1;
+    int64_t npass = 0;
+    if (mode == 1) {
+        uint64_t r = cap - 1ull;
+        int64_t bits = 0;
+        while (r != 0ull) {
+            ++bits;
+            r >>= 1;
         }
-        AscendC::PipeBarrier<PIPE_ALL>();
-        AscendC::DataCopyExtParams cp2{1, (uint32_t)(nb * 4), 0, 0, 0};
-        AscendC::DataCopyPad(preGm[(int64_t)(c * shardWords / 16) + b], oL, cp2);
-        AscendC::PipeBarrier<PIPE_ALL>();
+        npass = (bits + 7) / 8;
+        if (npass < 1) {
+            npass = 1;
+        }
+        if (npass > 4) {
+            npass = 4;
+        }
     }
+
+    AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(UK_EV1);
+    AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(UK_EV1);
+    l.SetValue(UK_P_MINKEY, (int64_t)minKey);
+    l.SetValue(UK_P_CAP, (int64_t)cap);
+    l.SetValue(UK_P_MODE, mode);
+    l.SetValue(UK_P_NPASS, npass);
+    l.SetValue(UK_P_D, (int64_t)0);
+    AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV2);
+    AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV2);
+    AscendC::GlobalTensor<int64_t> pg;
+    pg.SetGlobalBuffer((__gm__ int64_t *)params);
+    AscendC::DataCopyExtParams cp5{1, (uint32_t)(5 * 8), 0, 0, 0};
+    AscendC::DataCopyPad(pg, l, cp5);
 }
 
-// inverse[i] = rank(bin(x[i])) = the exclusive prefix count at its block + the popcount below the bit
-__global__ __aicore__ void unique_f32_inverse(GM_ADDR x, GM_ADDR inverse, GM_ADDR bmp, GM_ADDR prefix,
-                                              GM_ADDR mm, GM_ADDR wsK, int64_t numel, int64_t blockLen,
-                                              uint32_t tileElems, int64_t keyMin)
+// ===========================================================================
+// dense path
+// ===========================================================================
+
+template <int64_t DT>
+__global__ __aicore__ void uk_dpres_kernel(GM_ADDR x, GM_ADDR bitmaps, GM_ADDR params, int64_t n,
+                                           int64_t blockLength, int64_t minKey, int64_t cap)
 {
-    AscendC::TPipe pipe;
-    AscendC::GlobalTensor<uint32_t> xGm;
-    AscendC::GlobalTensor<int64_t> invGm;
-    AscendC::GlobalTensor<uint32_t> bmpGm;
-    AscendC::GlobalTensor<int32_t> preGm;
-    AscendC::GlobalTensor<int64_t> kGm;
-    xGm.SetGlobalBuffer((__gm__ uint32_t *)x);
-    invGm.SetGlobalBuffer((__gm__ int64_t *)inverse);
-    bmpGm.SetGlobalBuffer((__gm__ uint32_t *)bmp);
-    preGm.SetGlobalBuffer((__gm__ int32_t *)prefix);
-    kGm.SetGlobalBuffer((__gm__ int64_t *)wsK);
-
-    AscendC::TBuf<AscendC::TPosition::VECCALC> inBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> outBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> kBuf;
-    pipe.InitBuffer(inBuf, tileElems * 4u);
-    pipe.InitBuffer(outBuf, tileElems * 8u);
-    pipe.InitBuffer(kBuf, 64);
-
-    auto kL = kBuf.Get<int64_t>();
-    {
-        AscendC::DataCopyExtParams cp{1, 16, 0, 0, 0};
-        AscendC::DataCopyPadExtParams<int64_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(kL, kGm, cp, pp);
+    int64_t blk = AscendC::GetBlockIdx();
+    int64_t start = blk * blockLength;
+    int64_t cnt = n - start;
+    if (cnt > blockLength) {
+        cnt = blockLength;
     }
-    AscendC::PipeBarrier<PIPE_ALL>();
-    const int64_t merged = ((__ubuf__ int64_t *)kL.GetPhyAddr())[1];
+    if (cnt < 0) {
+        cnt = 0;
+    }
 
-    const int64_t c = (int64_t)AscendC::GetBlockIdx();
-    int64_t start = blockLen * c;
-    int64_t end = start + blockLen;
-    if (end > numel) end = numel;
+    AscendC::TPipe pipe;
+    // minKey is produced on device by uk_prep_kernel for the integer dtypes, so it is read from the
+    // shared params block.  cap stays an argument so that every dense kernel agrees on the bitmap
+    // stride; for the integer path it is passed as UK_MAXCAP and the real range is only a guard.
+    UkPar pv;
+    UkReadPar(pipe, params, pv);
+    if (pv.mode != 0 || pv.cap <= 0 || pv.cap > cap) {
+        return;
+    }
+    uint64_t mk = (uint64_t)pv.minKey;
+    int64_t capWords = (pv.cap + 31) / 32;
 
-    auto inL = inBuf.Get<uint32_t>();
-    auto outL = outBuf.Get<int64_t>();
-    for (int64_t off = start; off < end; off += (int64_t)tileElems) {
-        int64_t n = end - off;
-        if (n > (int64_t)tileElems) n = (int64_t)tileElems;
-        AscendC::DataCopyExtParams cp{1, (uint32_t)(n * 4), 0, 0, 0};
-        AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(inL, xGm[off], cp, pp);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        __ubuf__ uint32_t *xp = (__ubuf__ uint32_t *)inL.GetPhyAddr();
-        __ubuf__ int64_t *op = (__ubuf__ int64_t *)outL.GetPhyAddr();
-        for (int64_t i = 0; i < n; ++i) {
-            uint32_t k = KeyOfBits(xp[i]);
-            int64_t delta = (int64_t)k - keyMin;
-            int64_t w = delta >> 5;
-            int64_t blk = w >> 4;
-            int64_t r = (int64_t)preGm.GetValue((uint32_t)blk);
-            for (int64_t j = blk * 16; j < w; ++j) {
-                r += (int64_t)Popc32(bmpGm.GetValue((uint32_t)j));
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bb;
+    // The per-lane base must stay 32 byte aligned for the vector OR merge below, and it also has
+    // to be at least capWords + 128 so the 2*count merge overrun stays inside the buffer.
+    int64_t laneStride = ((capWords + 128) + 7) / 8 * 8;
+    // Four independent lanes cost 4x the bitmap in UB; keep the total inside a safe budget and fall
+    // back to a single lane when a very wide reduced range would not fit (still correct, just less
+    // latency overlap).
+    int64_t lanes = UK_LANES;
+    if (laneStride * UK_LANES * 4 + UK_TILE * 8 + 1024 > 120 * 1024) {
+        lanes = 1;
+    }
+    pipe.InitBuffer(bb, laneStride * lanes * 4 + 256);
+    AscendC::LocalTensor<uint32_t> bmA = bb.Get<uint32_t>();
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bt;
+    pipe.InitBuffer(bt, UK_TILE * 8 + 256);
+    using RT = typename UkRaw<DT>::T;
+    AscendC::LocalTensor<RT> tl = bt.Get<RT>();
+
+    for (int64_t w = 0; w < laneStride * lanes; ++w) {
+        bmA.SetValue(w, (uint32_t)0);
+    }
+
+    AscendC::GlobalTensor<RT> xg;
+    xg.SetGlobalBuffer((__gm__ RT *)x);
+    for (int64_t off = 0; off < cnt; off += UK_TILE) {
+        int64_t len = UkMinI64(cnt - off, UK_TILE);
+        AscendC::DataCopyExtParams cp{1, (uint32_t)(len * (int64_t)sizeof(RT)), 0, 0, 0};
+        AscendC::DataCopyPadExtParams<RT> pp{false, 0, 0, 0};
+        AscendC::DataCopyPad(tl, xg[start + off], cp, pp);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+        // The bitmap update is a scatter read-modify-write, so a single chain is latency bound.
+        // UK_LANES independent bitmaps are updated in parallel, one per unrolled element, so the
+        // UB round trips overlap; the lanes are OR-merged into lane 0 afterwards.
+        int64_t i = 0;
+        for (; lanes >= UK_LANES && i + UK_LANES <= len; i += UK_LANES) {
+            uint32_t c0 = UkCode<DT>((uint64_t)tl.GetValue(i + 0), mk);
+            uint32_t c1 = UkCode<DT>((uint64_t)tl.GetValue(i + 1), mk);
+            uint32_t c2 = UkCode<DT>((uint64_t)tl.GetValue(i + 2), mk);
+            uint32_t c3 = UkCode<DT>((uint64_t)tl.GetValue(i + 3), mk);
+            uint32_t w0 = c0 >> 5;
+            uint32_t w1 = c1 >> 5;
+            uint32_t w2 = c2 >> 5;
+            uint32_t w3 = c3 >> 5;
+            bmA.SetValue(w0, bmA.GetValue(w0) | (1u << (c0 & 31u)));
+            bmA.SetValue(laneStride + w1, bmA.GetValue(laneStride + w1) | (1u << (c1 & 31u)));
+            bmA.SetValue(laneStride * 2 + w2, bmA.GetValue(laneStride * 2 + w2) | (1u << (c2 & 31u)));
+            bmA.SetValue(laneStride * 3 + w3, bmA.GetValue(laneStride * 3 + w3) | (1u << (c3 & 31u)));
+        }
+        for (; i < len; ++i) {
+            uint32_t c = UkCode<DT>((uint64_t)tl.GetValue(i), mk);
+            uint32_t w = c >> 5;
+            bmA.SetValue(w, bmA.GetValue(w) | (1u << (c & 31u)));
+        }
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(UK_EV0);
+    }
+
+    AscendC::SetFlag<AscendC::HardEvent::S_V>(UK_EV1);
+    AscendC::WaitFlag<AscendC::HardEvent::S_V>(UK_EV1);
+    for (int64_t l = 1; l < lanes; ++l) {
+        for (int64_t base = 0; base < capWords; base += UK_ORSTEP) {
+            int64_t nn = capWords - base;
+            if (nn > (int64_t)UK_ORSTEP) {
+                nn = (int64_t)UK_ORSTEP;
             }
-            uint32_t s = (uint32_t)(delta & 31);
-            uint32_t mask = (s == 0u) ? 0u : ((1u << s) - 1u);
-            r += (int64_t)Popc32(bmpGm.GetValue((uint32_t)w) & mask);
-            if (merged != 0 && k >= POS0_KEY) {
-                r -= 1;
-            }
-            op[i] = r;
+            AscendC::Or(bmA[base], bmA[base], bmA[l * laneStride + base], (int32_t)(2 * nn));
         }
-        AscendC::PipeBarrier<PIPE_ALL>();
-        AscendC::DataCopyExtParams cp2{1, (uint32_t)(n * 8), 0, 0, 0};
-        AscendC::DataCopyPad(invGm[off], outL, cp2);
-        AscendC::PipeBarrier<PIPE_ALL>();
+    }
+    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(UK_EV2);
+    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(UK_EV2);
+    AscendC::GlobalTensor<uint32_t> bg;
+    bg.SetGlobalBuffer((__gm__ uint32_t *)bitmaps);
+    AscendC::DataCopyExtParams cp2{1, (uint32_t)(capWords * 4), 0, 0, 0};
+    AscendC::DataCopyPad(bg[blk * capWords], bmA, cp2);
+}
+
+__global__ __aicore__ void uk_dscan_kernel(GM_ADDR bitmaps, GM_ADDR comb, GM_ADDR wordPrefix, GM_ADDR params,
+                                           int64_t numBlocks, int64_t cap)
+{
+    if (AscendC::GetBlockIdx() != 0) {
+        return;
+    }
+    AscendC::TPipe pipe;
+    UkPar pv;
+    UkReadPar(pipe, params, pv);
+    if (pv.mode != 0 || pv.cap <= 0 || pv.cap > cap) {
+        return;
+    }
+    int64_t capWords = (pv.cap + 31) / 32;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> ba;
+    pipe.InitBuffer(ba, capWords * 4 + 2048);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bt;
+    pipe.InitBuffer(bt, capWords * 4 + 2048);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bp;
+    pipe.InitBuffer(bp, 256);
+    AscendC::LocalTensor<uint32_t> acc = ba.Get<uint32_t>();
+    AscendC::LocalTensor<uint32_t> tmp = bt.Get<uint32_t>();
+    AscendC::LocalTensor<int64_t> pl = bp.Get<int64_t>();
+
+    AscendC::GlobalTensor<uint32_t> bg;
+    bg.SetGlobalBuffer((__gm__ uint32_t *)bitmaps);
+
+    AscendC::Duplicate(acc, (uint32_t)0, (int32_t)capWords);
+    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(UK_EV0);
+    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(UK_EV0);
+    AscendC::SetFlag<AscendC::HardEvent::V_S>(UK_EV3);
+    AscendC::WaitFlag<AscendC::HardEvent::V_S>(UK_EV3);
+    for (int64_t w = 0; w < capWords; ++w) {
+        acc.SetValue(w, 0u);
+    }
+    AscendC::SetFlag<AscendC::HardEvent::S_V>(UK_EV3);
+    AscendC::WaitFlag<AscendC::HardEvent::S_V>(UK_EV3);
+
+    // The OR-merge is issued in fixed 64 element steps requesting twice the step, so the whole
+    // [0, capWords) range is covered no matter how the vector builtin counts its elements.
+    for (int64_t c = 0; c < numBlocks; ++c) {
+        AscendC::DataCopyExtParams cp{1, (uint32_t)(capWords * 4), 0, 0, 0};
+        AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
+        AscendC::DataCopyPad(tmp, bg[c * capWords], cp, pp);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(UK_EV1);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(UK_EV1);
+        for (int64_t base = 0; base < capWords; base += UK_ORSTEP) {
+            int64_t n = capWords - base;
+            if (n > (int64_t)UK_ORSTEP) {
+                n = (int64_t)UK_ORSTEP;
+            }
+            AscendC::Or(acc[base], acc[base], tmp[base], (int32_t)(2 * n));
+        }
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(UK_EV0);
+    }
+
+    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(UK_EV2);
+    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(UK_EV2);
+    AscendC::GlobalTensor<uint32_t> cg;
+    cg.SetGlobalBuffer((__gm__ uint32_t *)comb);
+    AscendC::DataCopyExtParams cpw{1, (uint32_t)(capWords * 4), 0, 0, 0};
+    AscendC::DataCopyPad(cg, acc, cpw);
+
+    AscendC::SetFlag<AscendC::HardEvent::V_S>(UK_EV4);
+    AscendC::WaitFlag<AscendC::HardEvent::V_S>(UK_EV4);
+    uint32_t run = 0;
+    for (int64_t w = 0; w < capWords; ++w) {
+        uint32_t v = acc.GetValue(w);
+        tmp.SetValue(w, run);
+        run += UkPopc(v);
+    }
+    AscendC::GlobalTensor<uint32_t> wg;
+    wg.SetGlobalBuffer((__gm__ uint32_t *)wordPrefix);
+    AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV5);
+    AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV5);
+    AscendC::DataCopyPad(wg, tmp, cpw);
+
+    pl.SetValue(0, (int64_t)run);
+    AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV6);
+    AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV6);
+    AscendC::GlobalTensor<int64_t> pg;
+    pg.SetGlobalBuffer((__gm__ int64_t *)params);
+    AscendC::DataCopyExtParams cp8{1, 8, 0, 0, 0};
+    AscendC::DataCopyPad(pg[UK_P_D], pl, cp8);
+}
+
+template <int64_t DT>
+__global__ __aicore__ void uk_dy_kernel(GM_ADDR comb, GM_ADDR wordPrefix, GM_ADDR yBig, GM_ADDR params,
+                                        int64_t cap, int64_t numBlocks, int64_t minKey)
+{
+    AscendC::TPipe pipe;
+    UkPar pv;
+    UkReadPar(pipe, params, pv);
+    if (pv.mode != 0 || pv.cap <= 0 || pv.cap > cap) {
+        return;
+    }
+    uint64_t mk = (uint64_t)pv.minKey;
+    int64_t capWords = (pv.cap + 31) / 32;
+    int64_t blk = AscendC::GetBlockIdx();
+    int64_t w0 = blk * capWords / numBlocks;
+    int64_t w1 = (blk + 1) * capWords / numBlocks;
+    int64_t myw = w1 - w0;
+    if (myw < 0) {
+        myw = 0;
+    }
+
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bc;
+    pipe.InitBuffer(bc, myw * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bw;
+    pipe.InitBuffer(bw, myw * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bo;
+    pipe.InitBuffer(bo, UK_YOUT * 8 + 256);
+    AscendC::LocalTensor<uint32_t> cw = bc.Get<uint32_t>();
+    AscendC::LocalTensor<uint32_t> ww = bw.Get<uint32_t>();
+    using RT = typename UkRaw<DT>::T;
+    AscendC::LocalTensor<RT> ol = bo.Get<RT>();
+
+    AscendC::GlobalTensor<uint32_t> cg;
+    cg.SetGlobalBuffer((__gm__ uint32_t *)comb);
+    AscendC::GlobalTensor<uint32_t> wg;
+    wg.SetGlobalBuffer((__gm__ uint32_t *)wordPrefix);
+    AscendC::GlobalTensor<RT> yg;
+    yg.SetGlobalBuffer((__gm__ RT *)yBig);
+
+    if (myw > 0) {
+        AscendC::DataCopyExtParams cp{1, (uint32_t)(myw * 4), 0, 0, 0};
+        AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
+        AscendC::DataCopyPad(cw, cg[w0], cp, pp);
+        AscendC::DataCopyPad(ww, wg[w0], cp, pp);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+    }
+
+    int64_t outCnt = 0;
+    int64_t outStart = 0;
+    for (int64_t j = 0; j < myw; ++j) {
+        uint32_t bits = cw.GetValue(j);
+        uint32_t cur = ww.GetValue(j);
+        while (bits != 0u) {
+            int64_t pb = UkCtz(bits);
+            uint32_t code = (uint32_t)((uint32_t)(w0 + j) * 32u + (uint32_t)pb);
+            if (outCnt == 0) {
+                outStart = (int64_t)cur;
+            }
+            if (outCnt >= UK_YOUT) {
+                AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+                AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+                AscendC::DataCopyExtParams ocp{1, (uint32_t)(outCnt * (int64_t)sizeof(RT)), 0, 0, 0};
+                AscendC::DataCopyPad(yg[outStart], ol, ocp);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(UK_EV2);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(UK_EV2);
+                outCnt = 0;
+                outStart = (int64_t)cur;
+            }
+            ol.SetValue(outCnt, (RT)UkDecode<DT>(code, mk));
+            ++outCnt;
+            ++cur;
+            bits &= (bits - 1u);
+        }
+    }
+    if (outCnt > 0) {
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+        AscendC::DataCopyExtParams ocp{1, (uint32_t)(outCnt * (int64_t)sizeof(RT)), 0, 0, 0};
+        AscendC::DataCopyPad(yg[outStart], ol, ocp);
     }
 }
 
-// y: walk the shard bitmap in key order, rank each present bit, write the value at that rank
-__global__ __aicore__ void unique_f32_emit(GM_ADDR y, GM_ADDR bmp, GM_ADDR base, GM_ADDR mm, GM_ADDR wsK,
-                                           int64_t shardWords)
+template <int64_t DT>
+__global__ __aicore__ void uk_dinv_kernel(GM_ADDR x, GM_ADDR comb, GM_ADDR wordPrefix, GM_ADDR inv,
+                                          GM_ADDR params, int64_t n, int64_t blockLength, int64_t minKey,
+                                          int64_t cap)
 {
+    int64_t blk = AscendC::GetBlockIdx();
+    int64_t start = blk * blockLength;
+    int64_t cnt = n - start;
+    if (cnt > blockLength) {
+        cnt = blockLength;
+    }
+    if (cnt < 0) {
+        cnt = 0;
+    }
+
     AscendC::TPipe pipe;
-    AscendC::GlobalTensor<float> yGm;
-    AscendC::GlobalTensor<uint32_t> bmpGm;
-    AscendC::GlobalTensor<int64_t> baseGm;
-    AscendC::GlobalTensor<int64_t> mmGm;
-    AscendC::GlobalTensor<int64_t> kGm;
-    yGm.SetGlobalBuffer((__gm__ float *)y);
-    bmpGm.SetGlobalBuffer((__gm__ uint32_t *)bmp);
-    baseGm.SetGlobalBuffer((__gm__ int64_t *)base);
-    mmGm.SetGlobalBuffer((__gm__ int64_t *)mm);
-    kGm.SetGlobalBuffer((__gm__ int64_t *)wsK);
-
-    AscendC::TBuf<AscendC::TPosition::VECCALC> wBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> oBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> bBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> mmBuf;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> kBuf;
-    pipe.InitBuffer(wBuf, WTILE * 4u);
-    pipe.InitBuffer(oBuf, ETILE * 4u + 64);
-    pipe.InitBuffer(bBuf, 64);
-    pipe.InitBuffer(mmBuf, 64);
-    pipe.InitBuffer(kBuf, 64);
-
-    const int64_t c = (int64_t)AscendC::GetBlockIdx();
-    auto bL = bBuf.Get<int64_t>();
-    {
-        AscendC::DataCopyExtParams cp{1, 8, 0, 0, 0};
-        AscendC::DataCopyPadExtParams<int64_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(bL, baseGm[c], cp, pp);
+    UkPar pv;
+    UkReadPar(pipe, params, pv);
+    if (pv.mode != 0 || pv.cap <= 0 || pv.cap > cap) {
+        return;
     }
-    auto mmL = mmBuf.Get<int64_t>();
-    {
-        AscendC::DataCopyExtParams cp{1, 16, 0, 0, 0};
-        AscendC::DataCopyPadExtParams<int64_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(mmL, mmGm, cp, pp);
-    }
-    auto kkL = kBuf.Get<int64_t>();
-    {
-        AscendC::DataCopyExtParams cp{1, 16, 0, 0, 0};
-        AscendC::DataCopyPadExtParams<int64_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(kkL, kGm, cp, pp);
-    }
-    AscendC::PipeBarrier<PIPE_ALL>();
-    const int64_t keyMin = ((__ubuf__ int64_t *)mmL.GetPhyAddr())[0];
-    const int64_t merged = ((__ubuf__ int64_t *)kkL.GetPhyAddr())[1];
-    int64_t nat = ((__ubuf__ int64_t *)bL.GetPhyAddr())[0];
+    uint64_t mk = (uint64_t)pv.minKey;
+    int64_t capWords = (pv.cap + 31) / 32;
 
-    const int64_t wStart = c * shardWords;
-    const int64_t shardLo = keyMin + c * shardWords * 32;
-    auto wL = wBuf.Get<uint32_t>();
-    auto oL = oBuf.Get<float>();
-    __ubuf__ float *op = (__ubuf__ float *)oL.GetPhyAddr();
-    int32_t fill = 0;
-    int64_t fillPos = 0;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bc;
+    pipe.InitBuffer(bc, capWords * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bw;
+    pipe.InitBuffer(bw, capWords * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bt;
+    pipe.InitBuffer(bt, UK_TILE * 8 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bo;
+    pipe.InitBuffer(bo, UK_TILE * 8 + 256);
+    AscendC::LocalTensor<uint32_t> cw = bc.Get<uint32_t>();
+    AscendC::LocalTensor<uint32_t> ww = bw.Get<uint32_t>();
+    using RT = typename UkRaw<DT>::T;
+    AscendC::LocalTensor<RT> tl = bt.Get<RT>();
+    AscendC::LocalTensor<int64_t> ol = bo.Get<int64_t>();
 
-    for (int64_t b = 0; b < shardWords; b += (int64_t)WTILE) {
-        int64_t nw = shardWords - b;
-        if (nw > (int64_t)WTILE) nw = (int64_t)WTILE;
-        AscendC::DataCopyExtParams cp{1, (uint32_t)(nw * 4), 0, 0, 0};
+    AscendC::GlobalTensor<uint32_t> cg;
+    cg.SetGlobalBuffer((__gm__ uint32_t *)comb);
+    AscendC::GlobalTensor<uint32_t> wg;
+    wg.SetGlobalBuffer((__gm__ uint32_t *)wordPrefix);
+    AscendC::GlobalTensor<RT> xg;
+    xg.SetGlobalBuffer((__gm__ RT *)x);
+    AscendC::GlobalTensor<int64_t> ig;
+    ig.SetGlobalBuffer((__gm__ int64_t *)inv);
+
+    AscendC::DataCopyExtParams cpb{1, (uint32_t)(capWords * 4), 0, 0, 0};
+    AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
+    AscendC::DataCopyPad(cw, cg, cpb, pp);
+    AscendC::DataCopyPad(ww, wg, cpb, pp);
+    AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+    AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+
+    for (int64_t off = 0; off < cnt; off += UK_TILE) {
+        int64_t len = UkMinI64(cnt - off, UK_TILE);
+        AscendC::DataCopyExtParams cp{1, (uint32_t)(len * (int64_t)sizeof(RT)), 0, 0, 0};
+        AscendC::DataCopyPadExtParams<RT> pp2{false, 0, 0, 0};
+        AscendC::DataCopyPad(tl, xg[start + off], cp, pp2);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV1);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV1);
+        for (int64_t i = 0; i < len; ++i) {
+            uint32_t c = UkCode<DT>((uint64_t)tl.GetValue(i), mk);
+            uint32_t w = c >> 5;
+            uint32_t bit = c & 31u;
+            uint32_t mask = (bit == 0u) ? 0u : ((1u << bit) - 1u);
+            uint32_t rank = ww.GetValue(w) + UkPopc(cw.GetValue(w) & mask);
+            ol.SetValue(i, (int64_t)rank);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV2);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV2);
+        AscendC::DataCopyExtParams cpo{1, (uint32_t)(len * 8), 0, 0, 0};
+        AscendC::DataCopyPad(ig[start + off], ol, cpo);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(UK_EV3);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(UK_EV3);
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(UK_EV1);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(UK_EV1);
+    }
+}
+
+// ===========================================================================
+// radix path
+// ===========================================================================
+
+template <int64_t DT>
+__global__ __aicore__ void uk_rpack_kernel(GM_ADDR x, GM_ADDR keys, GM_ADDR pay, int64_t n, int64_t blockLength,
+                                           int64_t minKey)
+{
+    int64_t blk = AscendC::GetBlockIdx();
+    int64_t start = blk * blockLength;
+    int64_t cnt = n - start;
+    if (cnt > blockLength) {
+        cnt = blockLength;
+    }
+    if (cnt < 0) {
+        cnt = 0;
+    }
+
+    AscendC::TPipe pipe;
+    uint64_t mk = (uint64_t)minKey;
+
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bt;
+    pipe.InitBuffer(bt, UK_STILE * 8 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bk;
+    pipe.InitBuffer(bk, UK_STILE * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bp;
+    pipe.InitBuffer(bp, UK_STILE * 4 + 256);
+    using RT = typename UkRaw<DT>::T;
+    AscendC::LocalTensor<RT> tl = bt.Get<RT>();
+    AscendC::LocalTensor<uint32_t> kl = bk.Get<uint32_t>();
+    AscendC::LocalTensor<uint32_t> pl = bp.Get<uint32_t>();
+
+    AscendC::GlobalTensor<RT> xg;
+    xg.SetGlobalBuffer((__gm__ RT *)x);
+    AscendC::GlobalTensor<uint32_t> kg;
+    kg.SetGlobalBuffer((__gm__ uint32_t *)keys);
+    AscendC::GlobalTensor<uint32_t> pg;
+    pg.SetGlobalBuffer((__gm__ uint32_t *)pay);
+
+    for (int64_t off = 0; off < cnt; off += UK_STILE) {
+        int64_t len = UkMinI64(cnt - off, UK_STILE);
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(UK_EV0);
+        AscendC::DataCopyExtParams cp{1, (uint32_t)(len * (int64_t)sizeof(RT)), 0, 0, 0};
+        AscendC::DataCopyPadExtParams<RT> pp{false, 0, 0, 0};
+        AscendC::DataCopyPad(tl, xg[start + off], cp, pp);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV1);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV1);
+        for (int64_t i = 0; i < len; ++i) {
+            kl.SetValue(i, UkCode<DT>((uint64_t)tl.GetValue(i), mk));
+            pl.SetValue(i, (uint32_t)(start + off + i));
+        }
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV2);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV2);
+        AscendC::DataCopyExtParams cpk{1, (uint32_t)(len * 4), 0, 0, 0};
+        AscendC::DataCopyPad(kg[start + off], kl, cpk);
+        AscendC::DataCopyPad(pg[start + off], pl, cpk);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(UK_EV3);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(UK_EV3);
+    }
+}
+
+__global__ __aicore__ void uk_rhist_kernel(GM_ADDR keys, GM_ADDR hist, int64_t n, int64_t blockLength, int64_t pass)
+{
+    int64_t blk = AscendC::GetBlockIdx();
+    int64_t start = blk * blockLength;
+    int64_t cnt = n - start;
+    if (cnt > blockLength) {
+        cnt = blockLength;
+    }
+    if (cnt < 0) {
+        cnt = 0;
+    }
+
+    AscendC::TPipe pipe;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bh;
+    pipe.InitBuffer(bh, UK_BINS * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bt;
+    pipe.InitBuffer(bt, UK_TILE * 4 + 256);
+    AscendC::LocalTensor<uint32_t> hl = bh.Get<uint32_t>();
+    AscendC::LocalTensor<uint32_t> kl = bt.Get<uint32_t>();
+
+    // scalar zeroing only: a vector builtin is not guaranteed to process the whole count
+    for (int64_t d = 0; d < UK_BINS; ++d) {
+        hl.SetValue(d, 0u);
+    }
+
+    AscendC::GlobalTensor<uint32_t> kg;
+    kg.SetGlobalBuffer((__gm__ uint32_t *)keys);
+    uint32_t sh = (uint32_t)(pass * 8);
+    for (int64_t off = 0; off < cnt; off += UK_TILE) {
+        int64_t len = UkMinI64(cnt - off, UK_TILE);
+        AscendC::DataCopyExtParams cp{1, (uint32_t)(len * 4), 0, 0, 0};
         AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
-        AscendC::DataCopyPad(wL, bmpGm[wStart + b], cp, pp);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        __ubuf__ uint32_t *wp = (__ubuf__ uint32_t *)wL.GetPhyAddr();
-        for (int64_t j = 0; j < nw; ++j) {
-            uint32_t word = wp[j];
-            if (word == 0u) {
+        AscendC::DataCopyPad(kl, kg[start + off], cp, pp);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+        for (int64_t i = 0; i < len; ++i) {
+            uint32_t d = (kl.GetValue(i) >> sh) & 0xFFu;
+            hl.SetValue(d, hl.GetValue(d) + 1u);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(UK_EV0);
+    }
+
+    AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+    AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+    AscendC::GlobalTensor<uint32_t> hg;
+    hg.SetGlobalBuffer((__gm__ uint32_t *)hist);
+    AscendC::DataCopyExtParams cph{1, (uint32_t)(UK_BINS * 4), 0, 0, 0};
+    AscendC::DataCopyPad(hg[blk * UK_BINS], hl, cph);
+}
+
+__global__ __aicore__ void uk_rscan_kernel(GM_ADDR hist, GM_ADDR start, int64_t numBlocks)
+{
+    if (AscendC::GetBlockIdx() != 0) {
+        return;
+    }
+    int64_t total = numBlocks * UK_BINS;
+    AscendC::TPipe pipe;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bh;
+    pipe.InitBuffer(bh, total * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bs;
+    pipe.InitBuffer(bs, total * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bd;
+    pipe.InitBuffer(bd, UK_BINS * 8 + 256);
+    AscendC::LocalTensor<uint32_t> hl = bh.Get<uint32_t>();
+    AscendC::LocalTensor<uint32_t> sl = bs.Get<uint32_t>();
+    AscendC::LocalTensor<uint32_t> dl = bd.Get<uint32_t>();
+
+    AscendC::GlobalTensor<uint32_t> hg;
+    hg.SetGlobalBuffer((__gm__ uint32_t *)hist);
+    AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
+    // the whole numBlocks*256 entry control array is moved in fixed 4 KB bursts rather than one
+    // very long DataCopyPad, because a single burst of tens of KB is not reliably supported.
+    for (int64_t c0 = 0; c0 < total; c0 += UK_BURST) {
+        int64_t cn = total - c0;
+        if (cn > UK_BURST) {
+            cn = UK_BURST;
+        }
+        AscendC::DataCopyExtParams cp{1, (uint32_t)(cn * 4), 0, 0, 0};
+        AscendC::DataCopyPad(hl[c0], hg[c0], cp, pp);
+    }
+    AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+    AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+
+    // The destination layout must be digit-major, block-minor: every element of digit d, over all
+    // blocks, has to live in ONE contiguous range that is ordered by block.  A flat block-major
+    // prefix would place each block's digit groups inside that block's own segment, which only
+    // sorts every block separately and never performs a global stable radix pass.
+    AscendC::LocalTensor<uint32_t> gpre = dl[0];
+    AscendC::LocalTensor<uint32_t> rn = dl[UK_BINS];
+    for (int64_t d = 0; d < UK_BINS; ++d) {
+        gpre.SetValue(d, 0u);
+        rn.SetValue(d, 0u);
+    }
+    for (int64_t i = 0; i < total; ++i) {
+        uint32_t d = (uint32_t)((int64_t)i & (int64_t)(UK_BINS - 1));
+        gpre.SetValue(d, gpre.GetValue(d) + hl.GetValue(i));
+    }
+    uint32_t run = 0;
+    for (int64_t d = 0; d < UK_BINS; ++d) {
+        uint32_t t = gpre.GetValue(d);
+        gpre.SetValue(d, run);
+        run += t;
+    }
+    for (int64_t b = 0; b < numBlocks; ++b) {
+        for (int64_t d = 0; d < UK_BINS; ++d) {
+            uint32_t v = hl.GetValue(b * UK_BINS + d);
+            sl.SetValue(b * UK_BINS + d, gpre.GetValue(d) + rn.GetValue(d));
+            rn.SetValue(d, rn.GetValue(d) + v);
+        }
+    }
+    AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+    AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+    AscendC::GlobalTensor<uint32_t> sg;
+    sg.SetGlobalBuffer((__gm__ uint32_t *)start);
+    for (int64_t c0 = 0; c0 < total; c0 += UK_BURST) {
+        int64_t cn = total - c0;
+        if (cn > UK_BURST) {
+            cn = UK_BURST;
+        }
+        AscendC::DataCopyExtParams cp{1, (uint32_t)(cn * 4), 0, 0, 0};
+        AscendC::DataCopyPad(sg[c0], sl[c0], cp);
+    }
+}
+
+__global__ __aicore__ void uk_rscatter_kernel(GM_ADDR kIn, GM_ADDR pIn, GM_ADDR kOut, GM_ADDR pOut, GM_ADDR start,
+                                              int64_t n, int64_t blockLength, int64_t pass)
+{
+    int64_t blk = AscendC::GetBlockIdx();
+    int64_t s0 = blk * blockLength;
+    int64_t cnt = n - s0;
+    if (cnt > blockLength) {
+        cnt = blockLength;
+    }
+    if (cnt < 0) {
+        cnt = 0;
+    }
+
+    AscendC::TPipe pipe;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bc;
+    pipe.InitBuffer(bc, UK_BINS * 4 * 5 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bk;
+    pipe.InitBuffer(bk, UK_STILE * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bp;
+    pipe.InitBuffer(bp, UK_STILE * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bok;
+    pipe.InitBuffer(bok, (UK_STILE + 2048) * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bop;
+    pipe.InitBuffer(bop, (UK_STILE + 2048) * 4 + 256);
+    AscendC::LocalTensor<uint32_t> ctl = bc.Get<uint32_t>();
+    AscendC::LocalTensor<uint32_t> ik = bk.Get<uint32_t>();
+    AscendC::LocalTensor<uint32_t> ip = bp.Get<uint32_t>();
+    AscendC::LocalTensor<uint32_t> ok = bok.Get<uint32_t>();
+    AscendC::LocalTensor<uint32_t> op = bop.Get<uint32_t>();
+
+    AscendC::GlobalTensor<uint32_t> sg;
+    sg.SetGlobalBuffer((__gm__ uint32_t *)start);
+    AscendC::GlobalTensor<uint32_t> kig;
+    kig.SetGlobalBuffer((__gm__ uint32_t *)kIn);
+    AscendC::GlobalTensor<uint32_t> pig;
+    pig.SetGlobalBuffer((__gm__ uint32_t *)pIn);
+    AscendC::GlobalTensor<uint32_t> kog;
+    kog.SetGlobalBuffer((__gm__ uint32_t *)kOut);
+    AscendC::GlobalTensor<uint32_t> pog;
+    pog.SetGlobalBuffer((__gm__ uint32_t *)pOut);
+
+    AscendC::DataCopyExtParams cps{1, (uint32_t)(UK_BINS * 4), 0, 0, 0};
+    AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
+    AscendC::DataCopyPad(ctl, sg[blk * UK_BINS], cps, pp);
+    AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+    AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+
+    // ctl layout: [0,256) = mystart, [256,512) = lcnt, [512,768) = tcnt,
+    //             [768,1024) = tslot, [1024,1280) = tpos/gstart
+    AscendC::LocalTensor<uint32_t> mystartL = ctl[0];
+    AscendC::LocalTensor<uint32_t> lcntL = ctl[256];
+    AscendC::LocalTensor<uint32_t> tcntL = ctl[512];
+    AscendC::LocalTensor<uint32_t> tslotL = ctl[768];
+    AscendC::LocalTensor<uint32_t> tposL = ctl[1024];
+
+    for (int64_t d = 0; d < UK_BINS; ++d) {
+        lcntL.SetValue(d, (uint32_t)0);
+    }
+
+    uint32_t sh = (uint32_t)(pass * 8);
+    for (int64_t off = 0; off < cnt; off += UK_STILE) {
+        int64_t len = UkMinI64(cnt - off, UK_STILE);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(UK_EV3);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(UK_EV3);
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(UK_EV4);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(UK_EV4);
+        AscendC::DataCopyExtParams cp{1, (uint32_t)(len * 4), 0, 0, 0};
+        AscendC::DataCopyPad(ik, kig[s0 + off], cp, pp);
+        AscendC::DataCopyPad(ip, pig[s0 + off], cp, pp);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+
+        for (int64_t d = 0; d < UK_BINS; ++d) {
+            tcntL.SetValue(d, (uint32_t)0);
+        }
+        for (int64_t i = 0; i < len; ++i) {
+            uint32_t d = (ik.GetValue(i) >> sh) & 0xFFu;
+            tcntL.SetValue(d, tcntL.GetValue(d) + 1u);
+        }
+        uint32_t acc = 0;
+        for (int64_t d = 0; d < UK_BINS; ++d) {
+            uint32_t t = tcntL.GetValue(d);
+            uint32_t slot = (t + 7u) & ~7u;
+            tslotL.SetValue(d, acc);
+            tposL.SetValue(d, acc);
+            acc += slot;
+        }
+        for (int64_t i = 0; i < len; ++i) {
+            uint32_t k = ik.GetValue(i);
+            uint32_t d = (k >> sh) & 0xFFu;
+            uint32_t pos = tposL.GetValue(d);
+            tposL.SetValue(d, pos + 1u);
+            ok.SetValue(pos, k);
+            op.SetValue(pos, ip.GetValue(i));
+        }
+
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+        for (int64_t d = 0; d < UK_BINS; ++d) {
+            uint32_t t = tcntL.GetValue(d);
+            if (t == 0u) {
                 continue;
             }
-            const int64_t wkey0 = shardLo + (b + j) * 32;
-            for (int32_t t = 0; t < 32; ++t) {
-                if (((word >> (uint32_t)t) & 1u) == 0u) {
-                    continue;
+            uint32_t gpos = mystartL.GetValue(d) + lcntL.GetValue(d);
+            AscendC::DataCopyExtParams cpo{1, (uint32_t)(t * 4), 0, 0, 0};
+            AscendC::DataCopyPad(kog[gpos], ok[tslotL.GetValue(d)], cpo);
+            AscendC::DataCopyPad(pog[gpos], op[tslotL.GetValue(d)], cpo);
+        }
+        for (int64_t d = 0; d < UK_BINS; ++d) {
+            lcntL.SetValue(d, lcntL.GetValue(d) + tcntL.GetValue(d));
+        }
+    }
+}
+
+__global__ __aicore__ void uk_rflag_kernel(GM_ADDR keys, GM_ADDR flags, GM_ADDR cnts, int64_t n, int64_t blockLength)
+{
+    int64_t blk = AscendC::GetBlockIdx();
+    int64_t s0 = blk * blockLength;
+    int64_t cnt = n - s0;
+    if (cnt > blockLength) {
+        cnt = blockLength;
+    }
+    if (cnt < 0) {
+        cnt = 0;
+    }
+
+    AscendC::TPipe pipe;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bt;
+    pipe.InitBuffer(bt, UK_STILE * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bf;
+    pipe.InitBuffer(bf, UK_STILE + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> b1;
+    pipe.InitBuffer(b1, 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bc;
+    pipe.InitBuffer(bc, 256);
+    AscendC::LocalTensor<uint32_t> kl = bt.Get<uint32_t>();
+    AscendC::LocalTensor<uint8_t> fl = bf.Get<uint8_t>();
+    AscendC::LocalTensor<uint32_t> pv = b1.Get<uint32_t>();
+    AscendC::LocalTensor<uint32_t> cc = bc.Get<uint32_t>();
+
+    AscendC::GlobalTensor<uint32_t> kg;
+    kg.SetGlobalBuffer((__gm__ uint32_t *)keys);
+    AscendC::GlobalTensor<uint8_t> fg;
+    fg.SetGlobalBuffer((__gm__ uint8_t *)flags);
+    AscendC::GlobalTensor<uint32_t> cg;
+    cg.SetGlobalBuffer((__gm__ uint32_t *)cnts);
+
+    uint32_t prev = 0;
+    if (s0 > 0) {
+        AscendC::DataCopyExtParams cp1{1, 4, 0, 0, 0};
+        AscendC::DataCopyPadExtParams<uint32_t> pp1{false, 0, 0, 0};
+        AscendC::DataCopyPad(pv, kg[s0 - 1], cp1, pp1);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV5);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV5);
+        prev = pv.GetValue(0);
+    }
+
+    uint32_t local = 0;
+    for (int64_t off = 0; off < cnt; off += UK_STILE) {
+        int64_t len = UkMinI64(cnt - off, UK_STILE);
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(UK_EV0);
+        AscendC::DataCopyExtParams cp{1, (uint32_t)(len * 4), 0, 0, 0};
+        AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
+        AscendC::DataCopyPad(kl, kg[s0 + off], cp, pp);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+        for (int64_t i = 0; i < len; ++i) {
+            uint32_t k = kl.GetValue(i);
+            uint8_t f;
+            if (s0 + off + i == 0) {
+                f = 1;
+            } else {
+                f = (k != prev) ? 1 : 0;
+            }
+            fl.SetValue(i, f);
+            local += (uint32_t)f;
+            prev = k;
+        }
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+        AscendC::DataCopyExtParams cpf{1, (uint32_t)len, 0, 0, 0};
+        AscendC::DataCopyPad(fg[s0 + off], fl, cpf);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(UK_EV2);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(UK_EV2);
+    }
+
+    cc.SetValue(0, local);
+    AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV3);
+    AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV3);
+    AscendC::DataCopyExtParams cpc{1, 4, 0, 0, 0};
+    AscendC::DataCopyPad(cg[blk], cc, cpc);
+}
+
+__global__ __aicore__ void uk_rbase_kernel(GM_ADDR cnts, GM_ADDR base, GM_ADDR params, int64_t numBlocks)
+{
+    if (AscendC::GetBlockIdx() != 0) {
+        return;
+    }
+    AscendC::TPipe pipe;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bc;
+    pipe.InitBuffer(bc, numBlocks * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bb;
+    pipe.InitBuffer(bb, numBlocks * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bp;
+    pipe.InitBuffer(bp, 256);
+    AscendC::LocalTensor<uint32_t> cl = bc.Get<uint32_t>();
+    AscendC::LocalTensor<uint32_t> bl = bb.Get<uint32_t>();
+    AscendC::LocalTensor<int64_t> pl = bp.Get<int64_t>();
+
+    AscendC::GlobalTensor<uint32_t> cg;
+    cg.SetGlobalBuffer((__gm__ uint32_t *)cnts);
+    AscendC::DataCopyExtParams cp{1, (uint32_t)(numBlocks * 4), 0, 0, 0};
+    AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
+    AscendC::DataCopyPad(cl, cg, cp, pp);
+    AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+    AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+
+    uint32_t run = 0;
+    for (int64_t i = 0; i < numBlocks; ++i) {
+        uint32_t v = cl.GetValue(i);
+        bl.SetValue(i, run);
+        run += v;
+    }
+    AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+    AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+    AscendC::GlobalTensor<uint32_t> bg;
+    bg.SetGlobalBuffer((__gm__ uint32_t *)base);
+    AscendC::DataCopyPad(bg, bl, cp);
+
+    pl.SetValue(0, (int64_t)run);
+    AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV2);
+    AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV2);
+    AscendC::GlobalTensor<int64_t> pg;
+    pg.SetGlobalBuffer((__gm__ int64_t *)params);
+    AscendC::DataCopyExtParams cp8{1, 8, 0, 0, 0};
+    AscendC::DataCopyPad(pg[UK_P_D], pl, cp8);
+}
+
+template <int64_t DT>
+__global__ __aicore__ void uk_remit_kernel(GM_ADDR keys, GM_ADDR flags, GM_ADDR base, GM_ADDR yBig, GM_ADDR rank,
+                                           int64_t n, int64_t blockLength, int64_t minKey)
+{
+    int64_t blk = AscendC::GetBlockIdx();
+    int64_t s0 = blk * blockLength;
+    int64_t cnt = n - s0;
+    if (cnt > blockLength) {
+        cnt = blockLength;
+    }
+    if (cnt < 0) {
+        cnt = 0;
+    }
+
+    AscendC::TPipe pipe;
+    uint64_t mk = (uint64_t)minKey;
+
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bt;
+    pipe.InitBuffer(bt, UK_STILE * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bf;
+    pipe.InitBuffer(bf, UK_STILE + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> br;
+    pipe.InitBuffer(br, UK_STILE * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> by;
+    pipe.InitBuffer(by, UK_STILE * 8 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> b1;
+    pipe.InitBuffer(b1, 512);
+    AscendC::LocalTensor<uint32_t> kl = bt.Get<uint32_t>();
+    AscendC::LocalTensor<uint8_t> fl = bf.Get<uint8_t>();
+    AscendC::LocalTensor<uint32_t> rl = br.Get<uint32_t>();
+    using RT = typename UkRaw<DT>::T;
+    AscendC::LocalTensor<RT> yl = by.Get<RT>();
+    AscendC::LocalTensor<uint32_t> one = b1.Get<uint32_t>();
+
+    AscendC::GlobalTensor<uint32_t> kg;
+    kg.SetGlobalBuffer((__gm__ uint32_t *)keys);
+    AscendC::GlobalTensor<uint8_t> fg;
+    fg.SetGlobalBuffer((__gm__ uint8_t *)flags);
+    AscendC::GlobalTensor<uint32_t> bg;
+    bg.SetGlobalBuffer((__gm__ uint32_t *)base);
+    AscendC::GlobalTensor<uint32_t> rg;
+    rg.SetGlobalBuffer((__gm__ uint32_t *)rank);
+    AscendC::GlobalTensor<RT> yg;
+    yg.SetGlobalBuffer((__gm__ RT *)yBig);
+
+    AscendC::DataCopyExtParams cp1{1, 4, 0, 0, 0};
+    AscendC::DataCopyPadExtParams<uint32_t> pp1{false, 0, 0, 0};
+    AscendC::DataCopyPad(one, bg[blk], cp1, pp1);
+    AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV5);
+    AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV5);
+    uint32_t mybase = one.GetValue(0);
+
+    int64_t cur = 0;
+    for (int64_t off = 0; off < cnt; off += UK_STILE) {
+        int64_t len = UkMinI64(cnt - off, UK_STILE);
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(UK_EV0);
+        AscendC::DataCopyExtParams cp{1, (uint32_t)(len * 4), 0, 0, 0};
+        AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
+        AscendC::DataCopyPad(kl, kg[s0 + off], cp, pp);
+        AscendC::DataCopyExtParams cpf{1, (uint32_t)len, 0, 0, 0};
+        AscendC::DataCopyPadExtParams<uint8_t> ppf{false, 0, 0, 0};
+        AscendC::DataCopyPad(fl, fg[s0 + off], cpf, ppf);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+
+        int64_t yc = 0;
+        int64_t ystart = 0;
+        for (int64_t i = 0; i < len; ++i) {
+            uint8_t f = fl.GetValue(i);
+            if (off == 0 && i == 0) {
+                cur = (f != 0) ? (int64_t)mybase : ((int64_t)mybase - 1);
+            } else if (f != 0) {
+                cur += 1;
+            }
+            rl.SetValue(i, (uint32_t)cur);
+            if (f != 0) {
+                if (yc == 0) {
+                    ystart = cur;
                 }
-                uint32_t k = (uint32_t)(wkey0 + t);
-                // nat is the number of distinct keys strictly below k (natural rank)
-                if (!(merged != 0 && k == NEG0_KEY)) {
-                    int64_t idx = nat;
-                    if (merged != 0 && k >= POS0_KEY) {
-                        idx -= 1;
-                    }
-                    if (fill == 0) {
-                        fillPos = idx;
-                    } else if (idx != fillPos + fill) {
-                        AscendC::PipeBarrier<PIPE_ALL>();
-                        AscendC::DataCopyExtParams co{1, (uint32_t)fill * 4u, 0, 0, 0};
-                        AscendC::DataCopyPad(yGm[fillPos], oL, co);
-                        AscendC::PipeBarrier<PIPE_ALL>();
-                        fill = 0;
-                        fillPos = idx;
-                    }
-                    op[fill] = ValOfKey(k);
-                    ++fill;
-                    if (fill == ETILE) {
-                        AscendC::PipeBarrier<PIPE_ALL>();
-                        AscendC::DataCopyExtParams co{1, (uint32_t)fill * 4u, 0, 0, 0};
-                        AscendC::DataCopyPad(yGm[fillPos], oL, co);
-                        AscendC::PipeBarrier<PIPE_ALL>();
-                        fill = 0;
-                    }
-                }
-                ++nat;
+                yl.SetValue(yc, (RT)UkDecode<DT>(kl.GetValue(i), mk));
+                ++yc;
             }
         }
-        AscendC::PipeBarrier<PIPE_ALL>();
-    }
-    if (fill > 0) {
-        AscendC::PipeBarrier<PIPE_ALL>();
-        AscendC::DataCopyExtParams co{1, (uint32_t)fill * 4u, 0, 0, 0};
-        AscendC::DataCopyPad(yGm[fillPos], oL, co);
-        AscendC::PipeBarrier<PIPE_ALL>();
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+        AscendC::DataCopyExtParams cpr{1, (uint32_t)(len * 4), 0, 0, 0};
+        AscendC::DataCopyPad(rg[s0 + off], rl, cpr);
+        if (yc > 0) {
+            AscendC::DataCopyExtParams cpy{1, (uint32_t)(yc * (int64_t)sizeof(RT)), 0, 0, 0};
+            AscendC::DataCopyPad(yg[ystart], yl, cpy);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(UK_EV2);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(UK_EV2);
     }
 }
 
-// ---------------------------------------------------------------------------
-// tiling
-// ---------------------------------------------------------------------------
-std::tuple<int64_t, int64_t, int64_t> calc_unique_tiling(int64_t numel)
+__global__ __aicore__ void uk_rwiden_kernel(GM_ADDR rankSorted, GM_ADDR inv, int64_t n, int64_t blockLength)
 {
-    auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
-    int64_t coreNum = ascendcPlatform->GetCoreNumAiv();
-    if (coreNum <= 0) coreNum = 1;
-    if (coreNum > 512) coreNum = 512;
-    int64_t need = (numel + MIN_ELEMS_PER_CORE - 1) / MIN_ELEMS_PER_CORE;
-    if (need < 1) need = 1;
-    int64_t numBlocks = need < coreNum ? need : coreNum;
-    int64_t blockLen = (numel + numBlocks - 1) / numBlocks;
-    return std::make_tuple(numBlocks, blockLen, (int64_t)TILE_ELEMS);
+    int64_t blk = AscendC::GetBlockIdx();
+    int64_t s0 = blk * blockLength;
+    int64_t cnt = n - s0;
+    if (cnt > blockLength) {
+        cnt = blockLength;
+    }
+    if (cnt < 0) {
+        cnt = 0;
+    }
+    AscendC::TPipe pipe;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> br;
+    pipe.InitBuffer(br, UK_STILE * 4 + 256);
+    AscendC::TBuf<AscendC::TPosition::VECCALC> bo;
+    pipe.InitBuffer(bo, UK_STILE * 8 + 256);
+    AscendC::LocalTensor<uint32_t> rl = br.Get<uint32_t>();
+    AscendC::LocalTensor<int64_t> ol = bo.Get<int64_t>();
+
+    AscendC::GlobalTensor<uint32_t> rg;
+    rg.SetGlobalBuffer((__gm__ uint32_t *)rankSorted);
+    AscendC::GlobalTensor<int64_t> ig;
+    ig.SetGlobalBuffer((__gm__ int64_t *)inv);
+
+    for (int64_t off = 0; off < cnt; off += UK_STILE) {
+        int64_t len = UkMinI64(cnt - off, UK_STILE);
+        AscendC::DataCopyExtParams cp{1, (uint32_t)(len * 4), 0, 0, 0};
+        AscendC::DataCopyPadExtParams<uint32_t> pp{false, 0, 0, 0};
+        AscendC::DataCopyPad(rl, rg[s0 + off], cp, pp);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(UK_EV0);
+        for (int64_t i = 0; i < len; ++i) {
+            ol.SetValue(i, (int64_t)rl.GetValue(i));
+        }
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(UK_EV1);
+        AscendC::DataCopyExtParams cpo{1, (uint32_t)(len * 8), 0, 0, 0};
+        AscendC::DataCopyPad(ig[s0 + off], ol, cpo);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(UK_EV2);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(UK_EV2);
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(UK_EV0);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(UK_EV0);
+    }
 }
 
-// ---------------------------------------------------------------------------
-// extern "C" per dtype entry points
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// host side tiling + launch wrappers
+// ===========================================================================
+
+int64_t calc_unique_blocks(int64_t n)
+{
+    constexpr int64_t MIN_ELEMS_PER_CORE = 8192;
+    auto plat = platform_ascendc::PlatformAscendCManager::GetInstance();
+    int64_t coreNum = (plat != nullptr) ? (int64_t)plat->GetCoreNumAiv() : 1;
+    if (coreNum <= 0) {
+        coreNum = 1;
+    }
+    int64_t nb = (n + MIN_ELEMS_PER_CORE - 1) / MIN_ELEMS_PER_CORE;
+    if (nb < 1) {
+        nb = 1;
+    }
+    if (nb > coreNum) {
+        nb = coreNum;
+    }
+    return nb;
+}
+
+static inline int64_t UkGrid(int64_t n, int64_t blockLength)
+{
+    if (blockLength <= 0) {
+        return 1;
+    }
+    int64_t nb = (n + blockLength - 1) / blockLength;
+    return (nb < 1) ? 1 : nb;
+}
+
 extern "C" {
 
-#define UNIQUE_STAGE1_IMPL(NAME, TYPE)                                                                   \
-    void unique_stage1_##NAME(GM_ADDR x, GM_ADDR inverse, GM_ADDR wsPart, GM_ADDR wsMM,                  \
-                              GM_ADDR wsBmpCore, GM_ADDR wsBmpGlobal, GM_ADDR wsK, int64_t numel,        \
-                              int64_t numBlocks, int64_t blockLen, uint32_t tileElems, uint32_t bmpWords, \
-                              int64_t needInverse, void *stream)                                          \
-    {                                                                                                    \
-        LaunchStage1<TYPE>(x, inverse, wsPart, wsMM, wsBmpCore, wsBmpGlobal, wsK, numel, numBlocks,       \
-                           blockLen, tileElems, bmpWords, needInverse, stream);                          \
+void ukL_setparams(GM_ADDR params, int64_t minKey, int64_t cap, int64_t mode, int64_t npass, int64_t numBlocks,
+                   int64_t blockLength, void* stream)
+{
+    uk_setparams_kernel<<<1, nullptr, stream>>>(params, minKey, cap, mode, npass, numBlocks, blockLength);
+}
+
+void ukL_mm32(GM_ADDR x, GM_ADDR mm, int64_t n, int64_t blockLength, void* stream)
+{
+    uk_mm_kernel<int32_t><<<UkGrid(n, blockLength), nullptr, stream>>>(x, mm, n, blockLength);
+}
+
+void ukL_mm64(GM_ADDR x, GM_ADDR mm, int64_t n, int64_t blockLength, void* stream)
+{
+    uk_mm_kernel<int64_t><<<UkGrid(n, blockLength), nullptr, stream>>>(x, mm, n, blockLength);
+}
+
+void ukL_prep(GM_ADDR mm, GM_ADDR params, int64_t numBlocks, int64_t keyBase, int64_t nv64, void* stream)
+{
+    uk_prep_kernel<<<1, nullptr, stream>>>(mm, params, numBlocks, nv64);
+}
+
+void ukL_dpres(GM_ADDR x, GM_ADDR bitmaps, GM_ADDR params, int64_t n, int64_t blockLength, int64_t dt,
+               int64_t minKey, int64_t cap, void* stream)
+{
+    int64_t nb = UkGrid(n, blockLength);
+    switch (dt) {
+        case UK_DT_U8:
+            uk_dpres_kernel<UK_DT_U8><<<nb, nullptr, stream>>>(x, bitmaps, params, n, blockLength, minKey, cap);
+            break;
+        case UK_DT_I8:
+            uk_dpres_kernel<UK_DT_I8><<<nb, nullptr, stream>>>(x, bitmaps, params, n, blockLength, minKey, cap);
+            break;
+        case UK_DT_F16:
+            uk_dpres_kernel<UK_DT_F16><<<nb, nullptr, stream>>>(x, bitmaps, params, n, blockLength, minKey, cap);
+            break;
+        case UK_DT_BF16:
+            uk_dpres_kernel<UK_DT_BF16><<<nb, nullptr, stream>>>(x, bitmaps, params, n, blockLength, minKey, cap);
+            break;
+        case UK_DT_I32:
+            uk_dpres_kernel<UK_DT_I32><<<nb, nullptr, stream>>>(x, bitmaps, params, n, blockLength, minKey, cap);
+            break;
+        case UK_DT_I64:
+            uk_dpres_kernel<UK_DT_I64><<<nb, nullptr, stream>>>(x, bitmaps, params, n, blockLength, minKey, cap);
+            break;
+        default:
+            uk_dpres_kernel<UK_DT_F32><<<nb, nullptr, stream>>>(x, bitmaps, params, n, blockLength, minKey, cap);
+            break;
     }
+}
 
-#define UNIQUE_EMIT_IMPL(NAME, TYPE)                                                                     \
-    void unique_emit_##NAME(GM_ADDR y, GM_ADDR wsMM, GM_ADDR wsBmpGlobal, GM_ADDR wsK, uint32_t bmpWords, \
-                            void *stream)                                                                 \
-    {                                                                                                    \
-        LaunchEmit<TYPE>(y, wsMM, wsBmpGlobal, wsK, bmpWords, stream);                                    \
+void ukL_dscan(GM_ADDR bitmaps, GM_ADDR comb, GM_ADDR wordPrefix, GM_ADDR params, int64_t numBlocks, int64_t cap,
+               void* stream)
+{
+    uk_dscan_kernel<<<1, nullptr, stream>>>(bitmaps, comb, wordPrefix, params, numBlocks, cap);
+}
+
+void ukL_dy(GM_ADDR comb, GM_ADDR wordPrefix, GM_ADDR yBig, GM_ADDR params, int64_t cap, int64_t numBlocks,
+            int64_t dt, int64_t minKey, void* stream)
+{
+    switch (dt) {
+        case UK_DT_U8:
+            uk_dy_kernel<UK_DT_U8><<<numBlocks, nullptr, stream>>>(comb, wordPrefix, yBig, params, cap, numBlocks,
+                                                                   minKey);
+            break;
+        case UK_DT_I8:
+            uk_dy_kernel<UK_DT_I8><<<numBlocks, nullptr, stream>>>(comb, wordPrefix, yBig, params, cap, numBlocks,
+                                                                   minKey);
+            break;
+        case UK_DT_F16:
+            uk_dy_kernel<UK_DT_F16><<<numBlocks, nullptr, stream>>>(comb, wordPrefix, yBig, params, cap, numBlocks,
+                                                                    minKey);
+            break;
+        case UK_DT_BF16:
+            uk_dy_kernel<UK_DT_BF16><<<numBlocks, nullptr, stream>>>(comb, wordPrefix, yBig, params, cap, numBlocks,
+                                                                     minKey);
+            break;
+        case UK_DT_I32:
+            uk_dy_kernel<UK_DT_I32><<<numBlocks, nullptr, stream>>>(comb, wordPrefix, yBig, params, cap, numBlocks,
+                                                                    minKey);
+            break;
+        case UK_DT_I64:
+            uk_dy_kernel<UK_DT_I64><<<numBlocks, nullptr, stream>>>(comb, wordPrefix, yBig, params, cap, numBlocks,
+                                                                    minKey);
+            break;
+        default:
+            uk_dy_kernel<UK_DT_F32><<<numBlocks, nullptr, stream>>>(comb, wordPrefix, yBig, params, cap, numBlocks,
+                                                                    minKey);
+            break;
     }
+}
 
-UNIQUE_STAGE1_IMPL(u8, uint8_t)
-UNIQUE_STAGE1_IMPL(i8, int8_t)
-UNIQUE_STAGE1_IMPL(u16, uint16_t)
-UNIQUE_STAGE1_IMPL(i32, int32_t)
-UNIQUE_STAGE1_IMPL(i64, int64_t)
-
-UNIQUE_EMIT_IMPL(u8, uint8_t)
-UNIQUE_EMIT_IMPL(i8, int8_t)
-UNIQUE_EMIT_IMPL(u16, uint16_t)
-UNIQUE_EMIT_IMPL(i32, int32_t)
-UNIQUE_EMIT_IMPL(i64, int64_t)
-
-void unique_f32_pre(GM_ADDR x, GM_ADDR wsPart, GM_ADDR wsMM, int64_t numel, int64_t numBlocks,
-                    int64_t blockLen, uint32_t tileElems, void *stream)
+void ukL_dinv(GM_ADDR x, GM_ADDR comb, GM_ADDR wordPrefix, GM_ADDR inv, GM_ADDR params, int64_t n,
+              int64_t blockLength, int64_t dt, int64_t minKey, int64_t cap, void* stream)
 {
-    unique_f32_keymin<<<numBlocks, nullptr, stream>>>(x, wsPart, numel, blockLen, tileElems);
-    unique_minmax_final<<<1, nullptr, stream>>>(wsPart, wsMM, (int32_t)numBlocks);
+    int64_t nb = UkGrid(n, blockLength);
+    switch (dt) {
+        case UK_DT_U8:
+            uk_dinv_kernel<UK_DT_U8><<<nb, nullptr, stream>>>(x, comb, wordPrefix, inv, params, n, blockLength,
+                                                              minKey, cap);
+            break;
+        case UK_DT_I8:
+            uk_dinv_kernel<UK_DT_I8><<<nb, nullptr, stream>>>(x, comb, wordPrefix, inv, params, n, blockLength,
+                                                              minKey, cap);
+            break;
+        case UK_DT_F16:
+            uk_dinv_kernel<UK_DT_F16><<<nb, nullptr, stream>>>(x, comb, wordPrefix, inv, params, n, blockLength,
+                                                               minKey, cap);
+            break;
+        case UK_DT_BF16:
+            uk_dinv_kernel<UK_DT_BF16><<<nb, nullptr, stream>>>(x, comb, wordPrefix, inv, params, n, blockLength,
+                                                                minKey, cap);
+            break;
+        case UK_DT_I32:
+            uk_dinv_kernel<UK_DT_I32><<<nb, nullptr, stream>>>(x, comb, wordPrefix, inv, params, n, blockLength,
+                                                               minKey, cap);
+            break;
+        case UK_DT_I64:
+            uk_dinv_kernel<UK_DT_I64><<<nb, nullptr, stream>>>(x, comb, wordPrefix, inv, params, n, blockLength,
+                                                               minKey, cap);
+            break;
+        default:
+            uk_dinv_kernel<UK_DT_F32><<<nb, nullptr, stream>>>(x, comb, wordPrefix, inv, params, n, blockLength,
+                                                               minKey, cap);
+            break;
+    }
 }
 
-void unique_f32_bitset(GM_ADDR x, GM_ADDR bmp, GM_ADDR wsMM, GM_ADDR cnt, int64_t numel,
-                       int64_t numBlocks, uint32_t tileElems, int64_t shardWords, void *stream)
+void ukL_rpack(GM_ADDR x, GM_ADDR keys, GM_ADDR pay, int64_t n, int64_t blockLength, int64_t dt, int64_t minKey,
+               void* stream)
 {
-    unique_f32_shard_bitset<<<numBlocks, nullptr, stream>>>(x, bmp, wsMM, cnt, numel, tileElems,
-                                                            shardWords);
+    int64_t nb = UkGrid(n, blockLength);
+    switch (dt) {
+        case UK_DT_I32:
+            uk_rpack_kernel<UK_DT_I32><<<nb, nullptr, stream>>>(x, keys, pay, n, blockLength, minKey);
+            break;
+        case UK_DT_I64:
+            uk_rpack_kernel<UK_DT_I64><<<nb, nullptr, stream>>>(x, keys, pay, n, blockLength, minKey);
+            break;
+        default:
+            uk_rpack_kernel<UK_DT_F32><<<nb, nullptr, stream>>>(x, keys, pay, n, blockLength, minKey);
+            break;
+    }
 }
 
-void unique_f32_scan(GM_ADDR cnt, GM_ADDR base, GM_ADDR wsK, GM_ADDR wsMM, GM_ADDR bmp,
-                     int64_t numBlocks, int64_t keyMin, int64_t words, void *stream)
+void ukL_rhist(GM_ADDR keys, GM_ADDR hist, int64_t n, int64_t blockLength, int64_t pass, void* stream)
 {
-    unique_f32_shard_scan<<<1, nullptr, stream>>>(cnt, base, wsK, wsMM, bmp, numBlocks, keyMin, words);
+    uk_rhist_kernel<<<UkGrid(n, blockLength), nullptr, stream>>>(keys, hist, n, blockLength, pass);
 }
 
-void unique_f32_pref(GM_ADDR bmp, GM_ADDR base, GM_ADDR prefix, int64_t numBlocks, int64_t shardWords,
-                     void *stream)
+void ukL_rscan(GM_ADDR hist, GM_ADDR start, int64_t numBlocks, void* stream)
 {
-    unique_f32_prefix<<<numBlocks, nullptr, stream>>>(bmp, base, prefix, shardWords);
+    uk_rscan_kernel<<<1, nullptr, stream>>>(hist, start, numBlocks);
 }
 
-void unique_f32_inv(GM_ADDR x, GM_ADDR inverse, GM_ADDR bmp, GM_ADDR prefix, GM_ADDR wsMM,
-                    GM_ADDR wsK, int64_t numel, int64_t numBlocks, int64_t blockLen,
-                    uint32_t tileElems, int64_t keyMin, void *stream)
+void ukL_rscatter(GM_ADDR kIn, GM_ADDR pIn, GM_ADDR kOut, GM_ADDR pOut, GM_ADDR start, int64_t n,
+                  int64_t blockLength, int64_t pass, void* stream)
 {
-    unique_f32_inverse<<<numBlocks, nullptr, stream>>>(x, inverse, bmp, prefix, wsMM, wsK, numel,
-                                                       blockLen, tileElems, keyMin);
+    uk_rscatter_kernel<<<UkGrid(n, blockLength), nullptr, stream>>>(kIn, pIn, kOut, pOut, start, n, blockLength,
+                                                                    pass);
 }
 
-void unique_f32_out(GM_ADDR y, GM_ADDR bmp, GM_ADDR base, GM_ADDR wsMM, GM_ADDR wsK,
-                    int64_t numBlocks, int64_t shardWords, void *stream)
+void ukL_rflag(GM_ADDR keys, GM_ADDR flags, GM_ADDR cnts, int64_t n, int64_t blockLength, void* stream)
 {
-    unique_f32_emit<<<numBlocks, nullptr, stream>>>(y, bmp, base, wsMM, wsK, shardWords);
+    uk_rflag_kernel<<<UkGrid(n, blockLength), nullptr, stream>>>(keys, flags, cnts, n, blockLength);
 }
+
+void ukL_rbase(GM_ADDR cnts, GM_ADDR base, GM_ADDR params, int64_t numBlocks, void* stream)
+{
+    uk_rbase_kernel<<<1, nullptr, stream>>>(cnts, base, params, numBlocks);
 }
+
+void ukL_remit(GM_ADDR keys, GM_ADDR flags, GM_ADDR base, GM_ADDR yBig, GM_ADDR rank, int64_t n,
+               int64_t blockLength, int64_t dt, int64_t minKey, void* stream)
+{
+    int64_t nb = UkGrid(n, blockLength);
+    switch (dt) {
+        case UK_DT_I32:
+            uk_remit_kernel<UK_DT_I32><<<nb, nullptr, stream>>>(keys, flags, base, yBig, rank, n, blockLength,
+                                                                minKey);
+            break;
+        case UK_DT_I64:
+            uk_remit_kernel<UK_DT_I64><<<nb, nullptr, stream>>>(keys, flags, base, yBig, rank, n, blockLength,
+                                                                minKey);
+            break;
+        default:
+            uk_remit_kernel<UK_DT_F32><<<nb, nullptr, stream>>>(keys, flags, base, yBig, rank, n, blockLength,
+                                                                minKey);
+            break;
+    }
+}
+
+void ukL_rwiden(GM_ADDR rankSorted, GM_ADDR inv, int64_t n, int64_t blockLength, void* stream)
+{
+    uk_rwiden_kernel<<<UkGrid(n, blockLength), nullptr, stream>>>(rankSorted, inv, n, blockLength);
+}
+
+} // extern "C"

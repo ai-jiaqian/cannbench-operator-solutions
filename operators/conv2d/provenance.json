@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-23T14:30:12.735866",
-  "source_job_scaffold": "jobs/job_a98a3d915037",
   "files": {
     "csrc/ops/conv2d/CMakeLists.txt": "c666322169bce0b0805b3c736bb68d1a1ab434da667029b9a77d59bb1d2e975f",
     "csrc/ops/conv2d/op_kernel/conv2d_kernel.cpp": "8d16c64e99104045e44eefd87ef323700094057a564c3424e9a4cc1744559eea",

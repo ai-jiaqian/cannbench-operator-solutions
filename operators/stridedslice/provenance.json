@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-20T09:54:03.085283",
-  "source_job_scaffold": "jobs/job_2bcd0f899d41",
   "files": {
     "csrc/ops/strided_slice/CMakeLists.txt": "f013f7c21c3ac3c729d1116ccbae287f7797b37e91f0e040f9dbb11e6bbdfe82",
     "csrc/ops/strided_slice/op_kernel/strided_slice_kernel.cpp": "ce748cf7695f5037da2e81b421a4a6f46e693771057a6a3e7bf062e529023dc8",

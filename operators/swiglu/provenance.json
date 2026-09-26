@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-02T00:09:38.564064",
-  "source_job_scaffold": "jobs/job_26536843a4af",
   "files": {
     "csrc/ops/swi_glu/CMakeLists.txt": "33bfe8c21dbac09062650a1c4248a733b359d1de332597c09a3fa2588ba877de",
     "csrc/ops/swi_glu/op_kernel/swi_glu_kernel.cpp": "4ef4e0a6d0d4b6120fc91389bdb5337116367b655373b65994b5cd1c5a873d6d",

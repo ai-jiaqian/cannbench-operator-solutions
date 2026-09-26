@@ -10,82 +10,80 @@
 
 /*!
  * \file unique_launch.h
- * \brief Host-side (g++) declarations for the Unique operator.
+ * \brief Launch declarations shared between the bisheng kernel TU and the g++ plugin TU.
  *
- * The device side implements a "presence bitmap + rank" dense route for every dtype whose monotone
- * key space is bounded (uint8 / int8 / fp16 / bf16 / int32 / int64 with a small value span) and an
- * LSD radix route for float32 (unbounded key space).
- *
- * Host responsibilities are limited to:
- *   - tiling parameters (block count / per block element count / tile size),
- *   - device workspace allocation,
- *   - reading back the single scalar "number of unique values" (the output length of y is data
- *     dependent, so the size of y cannot be known without it),
- *   - launching the kernels.
- * No tensor element is ever computed on the host.
+ * All value computation happens inside the device kernels declared below.  The plugin only
+ * allocates device workspaces, launches kernels, and reads back shape metadata (number of
+ * distinct values D, and for the integer dtypes the reduced key range) because torch.unique's
+ * output length is data dependent and cannot be derived from the input shape alone.
  */
 
 #ifndef UNIQUE_LAUNCH_H
 #define UNIQUE_LAUNCH_H
 
 #include <cstdint>
-#include <tuple>
 
 #ifndef GM_ADDR
 #define GM_ADDR void*
 #endif
 
-// Tiling: returns (numBlocks, blockLength, tileElems)
-std::tuple<int64_t, int64_t, int64_t> calc_unique_tiling(int64_t numel);
+// dtype codes shared with the plugin
+constexpr int64_t UK_DT_U8 = 0;
+constexpr int64_t UK_DT_I8 = 1;
+constexpr int64_t UK_DT_F16 = 2;
+constexpr int64_t UK_DT_BF16 = 3;
+constexpr int64_t UK_DT_I32 = 4;
+constexpr int64_t UK_DT_I64 = 5;
+constexpr int64_t UK_DT_F32 = 6;
 
-// Bits per core bitmap region (words of 32 bits). One region per block.
-constexpr int64_t UNIQUE_MAX_BMP_WORDS = 8192;
+// params[] slot layout (device int64 buffer, 8 slots)
+constexpr int64_t UK_P_MINKEY = 0;
+constexpr int64_t UK_P_CAP = 1;
+constexpr int64_t UK_P_MODE = 2; // 0 = dense bitmap path, 1 = radix path
+constexpr int64_t UK_P_NPASS = 3;
+constexpr int64_t UK_P_D = 4;
+constexpr int64_t UK_P_NUMBLK = 5;
+constexpr int64_t UK_P_BLOCKLEN = 6;
+
+// dense path capacity limit (codes); above this the radix path is selected on device
+constexpr int64_t UK_MAXCAP = 262144;
+// radix digit bins
+constexpr int64_t UK_BINS = 256;
+
+// host side tiling: number of AIV blocks to use for n elements
+int64_t calc_unique_blocks(int64_t n);
 
 extern "C" {
 
-#define UNIQUE_STAGE1_DECL(NAME)                                                                        \
-    void unique_stage1_##NAME(GM_ADDR x, GM_ADDR inverse, GM_ADDR wsPart, GM_ADDR wsMM,                 \
-                              GM_ADDR wsBmpCore, GM_ADDR wsBmpGlobal, GM_ADDR wsK, int64_t numel,       \
-                              int64_t numBlocks, int64_t blockLen, uint32_t tileElems, uint32_t bmpWords, \
-                              int64_t needInverse, void *stream);
+// ---------- setup ----------
+void ukL_setparams(GM_ADDR params, int64_t minKey, int64_t cap, int64_t mode, int64_t npass, int64_t numBlocks,
+                   int64_t blockLength, void* stream);
+void ukL_mm32(GM_ADDR x, GM_ADDR mm, int64_t n, int64_t blockLength, void* stream);
+void ukL_mm64(GM_ADDR x, GM_ADDR mm, int64_t n, int64_t blockLength, void* stream);
+void ukL_prep(GM_ADDR mm, GM_ADDR params, int64_t numBlocks, int64_t keyBase, int64_t nv64, void* stream);
 
-#define UNIQUE_EMIT_DECL(NAME)                                                                          \
-    void unique_emit_##NAME(GM_ADDR y, GM_ADDR wsMM, GM_ADDR wsBmpGlobal, GM_ADDR wsK, uint32_t bmpWords, \
-                            void *stream);
+// ---------- dense path ----------
+void ukL_dpres(GM_ADDR x, GM_ADDR bitmaps, GM_ADDR params, int64_t n, int64_t blockLength, int64_t dt,
+               int64_t minKey, int64_t cap, void* stream);
+void ukL_dscan(GM_ADDR bitmaps, GM_ADDR comb, GM_ADDR wordPrefix, GM_ADDR params, int64_t numBlocks, int64_t cap,
+               void* stream);
+void ukL_dy(GM_ADDR comb, GM_ADDR wordPrefix, GM_ADDR yBig, GM_ADDR params, int64_t cap, int64_t numBlocks,
+            int64_t dt, int64_t minKey, void* stream);
+void ukL_dinv(GM_ADDR x, GM_ADDR comb, GM_ADDR wordPrefix, GM_ADDR inv, GM_ADDR params, int64_t n,
+              int64_t blockLength, int64_t dt, int64_t minKey, int64_t cap, void* stream);
 
-UNIQUE_STAGE1_DECL(u8)
-UNIQUE_STAGE1_DECL(i8)
-UNIQUE_STAGE1_DECL(u16)
-UNIQUE_STAGE1_DECL(i32)
-UNIQUE_STAGE1_DECL(i64)
-
-UNIQUE_EMIT_DECL(u8)
-UNIQUE_EMIT_DECL(i8)
-UNIQUE_EMIT_DECL(u16)
-UNIQUE_EMIT_DECL(i32)
-UNIQUE_EMIT_DECL(i64)
-
-// float32 route: sharded dense presence bitmap over the monotone 32 bit key.
-// stage pre   : per block key min/max (+ final reduce)
-// stage bitset: each block owns a key shard and sets its presence bits, reporting the shard's
-//               distinct count
-// stage scan  : single block - per shard rank bases, total distinct count K and the -0.0/+0.0 flag
-// stage pref  : per block exclusive prefix count at every 16-word block of its shard bitmap
-// stage inv   : inverse index
-// stage out   : y
-void unique_f32_pre(GM_ADDR x, GM_ADDR wsPart, GM_ADDR wsMM, int64_t numel, int64_t numBlocks,
-                    int64_t blockLen, uint32_t tileElems, void *stream);
-void unique_f32_bitset(GM_ADDR x, GM_ADDR bmp, GM_ADDR wsMM, GM_ADDR cnt, int64_t numel,
-                       int64_t numBlocks, uint32_t tileElems, int64_t shardWords, void *stream);
-void unique_f32_scan(GM_ADDR cnt, GM_ADDR base, GM_ADDR wsK, GM_ADDR wsMM, GM_ADDR bmp,
-                     int64_t numBlocks, int64_t keyMin, int64_t words, void *stream);
-void unique_f32_pref(GM_ADDR bmp, GM_ADDR base, GM_ADDR prefix, int64_t numBlocks, int64_t shardWords,
-                     void *stream);
-void unique_f32_inv(GM_ADDR x, GM_ADDR inverse, GM_ADDR bmp, GM_ADDR prefix, GM_ADDR wsMM,
-                    GM_ADDR wsK, int64_t numel, int64_t numBlocks, int64_t blockLen,
-                    uint32_t tileElems, int64_t keyMin, void *stream);
-void unique_f32_out(GM_ADDR y, GM_ADDR bmp, GM_ADDR base, GM_ADDR wsMM, GM_ADDR wsK,
-                    int64_t numBlocks, int64_t shardWords, void *stream);
+// ---------- radix path ----------
+void ukL_rpack(GM_ADDR x, GM_ADDR keys, GM_ADDR pay, int64_t n, int64_t blockLength, int64_t dt, int64_t minKey,
+               void* stream);
+void ukL_rhist(GM_ADDR keys, GM_ADDR hist, int64_t n, int64_t blockLength, int64_t pass, void* stream);
+void ukL_rscan(GM_ADDR hist, GM_ADDR start, int64_t numBlocks, void* stream);
+void ukL_rscatter(GM_ADDR kIn, GM_ADDR pIn, GM_ADDR kOut, GM_ADDR pOut, GM_ADDR start, int64_t n,
+                  int64_t blockLength, int64_t pass, void* stream);
+void ukL_rflag(GM_ADDR keys, GM_ADDR flags, GM_ADDR cnts, int64_t n, int64_t blockLength, void* stream);
+void ukL_rbase(GM_ADDR cnts, GM_ADDR base, GM_ADDR params, int64_t numBlocks, void* stream);
+void ukL_remit(GM_ADDR keys, GM_ADDR flags, GM_ADDR base, GM_ADDR yBig, GM_ADDR rank, int64_t n,
+               int64_t blockLength, int64_t dt, int64_t minKey, void* stream);
+void ukL_rwiden(GM_ADDR rankSorted, GM_ADDR inv, int64_t n, int64_t blockLength, void* stream);
 }
 
 #endif // UNIQUE_LAUNCH_H

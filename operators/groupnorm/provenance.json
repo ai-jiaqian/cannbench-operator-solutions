@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-04T00:24:42.238360",
-  "source_job_scaffold": "jobs/job_d98236aa8f09",
   "files": {
     "csrc/ops/group_norm/CMakeLists.txt": "60fefd84c5e9beda5c365584ad6ca74c77454c98a0faf92b16dac93f632dab7f",
     "csrc/ops/group_norm/op_kernel/group_norm_kernel.cpp": "cb3d862e6c6d3d3dee693b2d494f2ad020c9b472f6a7036da3193cd7cb172086",

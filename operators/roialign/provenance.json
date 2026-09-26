@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-25T03:25:34.684491",
-  "source_job_scaffold": "jobs/job_9d7d5410179b",
   "files": {
     "csrc/ops/roi_align/CMakeLists.txt": "c9f55e27d89571adcc0e7fbe380f93693958e181d7316d4e7ef350b0073d26f9",
     "csrc/ops/roi_align/op_kernel/roi_align_kernel.cpp": "ce6a72585cbb74e6cfa40b06dc96a21230650e89d3cc90927c8fe4d62ee3bf43",

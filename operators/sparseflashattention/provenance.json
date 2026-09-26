@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-24T19:19:59.058214",
-  "source_job_scaffold": "jobs/job_875f3de90943",
   "files": {
     "csrc/ops/sparse_flash_attention/CMakeLists.txt": "516415a8cf59e1a422fed1ee5a635d20860fbe067ec63e4267493c2b5a73bdb1",
     "csrc/ops/sparse_flash_attention/op_kernel/sparse_flash_attention_kernel.cpp": "f637e67d274565fcc82e2ca0301210ca01c0a8e70b0c17e6f6ac292a169af4db",

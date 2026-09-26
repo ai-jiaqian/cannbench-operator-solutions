@@ -22,17 +22,6 @@ BASE_URL = "https://cannbench.com"
 SOLUTION_ID = "sol_57a81237c790d4a9"
 ACCOUNT = "jiaqian"
 EXPECTED_OPERATORS = 53
-COMMON_FILES = {
-    "CMakeLists.txt",
-    "build.sh",
-    "requirements.txt",
-    "setup.py",
-    "cann_bench/__init__.py",
-    "csrc/CMakeLists.txt",
-    "csrc/extension.cpp",
-    "csrc/ops/CMakeLists.txt",
-    "scripts/build_wheel.sh",
-}
 
 
 def request(path: str, token: str | None = None) -> bytes:
@@ -71,7 +60,7 @@ def normalize(name: str) -> str:
 
 def source_files(
     archive: bytes, operators: list[dict[str, Any]]
-) -> tuple[dict[str, bytes], dict[str, dict[str, bytes]]]:
+) -> dict[str, dict[str, bytes]]:
     with zipfile.ZipFile(BytesIO(archive)) as source:
         if source.testzip() is not None:
             raise ValueError("ZIP integrity check failed")
@@ -85,17 +74,6 @@ def source_files(
             if (info.external_attr >> 16) & 0o170000 == 0o120000:
                 raise ValueError(f"symlink in source ZIP: {info.filename}")
             members[info.filename] = source.read(info)
-
-    common = {
-        name: data
-        for name, data in members.items()
-        if name in COMMON_FILES
-        or (name.startswith("cmake/") and name.endswith(".cmake"))
-    }
-    if not COMMON_FILES.issubset(common):
-        raise ValueError(
-            f"missing common files: {sorted(COMMON_FILES - common.keys())}"
-        )
 
     selected = {}
     all_dirs = {
@@ -126,7 +104,7 @@ def source_files(
         ):
             raise ValueError(f"incomplete operator source: {op['operator_key']}")
         selected[op["operator_key"]] = files
-    return common, selected
+    return selected
 
 
 def selection(components: dict[str, Any]) -> list[dict[str, Any]]:
@@ -214,7 +192,6 @@ def main() -> None:
     for row in rows:
         by_job.setdefault(row["job_id"], []).append(row)
     token = keychain_token()
-    downloaded = {}
     source_sets = {}
     for job, ops in sorted(by_job.items()):
         detail = json.loads(request(f"/api/jobs/{job}", token))["job"]
@@ -231,46 +208,15 @@ def main() -> None:
         ):
             raise ValueError(f"official Job provenance mismatch: {job}")
         archive = request(f"/api/jobs/{job}/submission/download", token)
-        common, selected = source_files(archive, ops)
-        downloaded[job] = (archive, common)
-        source_sets.update(selected)
+        source_sets.update(source_files(archive, ops))
 
-    jobs_dir = ROOT / "jobs"
     ops_dir = ROOT / "operators"
-    jobs_dir.mkdir(exist_ok=True)
     ops_dir.mkdir(exist_ok=True)
-    for old_dir in jobs_dir.iterdir():
-        if old_dir.is_dir() and old_dir.name not in by_job:
-            rmtree(old_dir)
     for old_dir in ops_dir.iterdir():
         if old_dir.is_dir() and old_dir.name not in {
             row["operator_key"] for row in rows
         }:
             rmtree(old_dir)
-
-    for job, (archive, common) in downloaded.items():
-        directory = jobs_dir / job
-        if directory.exists():
-            rmtree(directory)
-        for name, data in common.items():
-            write_file(directory / name, data)
-        write_file(
-            directory / "provenance.json",
-            (
-                json.dumps(
-                    {
-                        "job_id": job,
-                        "official_submission_zip_sha256": digest(archive),
-                        "files": {
-                            name: digest(data) for name, data in sorted(common.items())
-                        },
-                    },
-                    indent=2,
-                    ensure_ascii=False,
-                )
-                + "\n"
-            ).encode(),
-        )
 
     for row in rows:
         key = row["operator_key"]
@@ -286,7 +232,6 @@ def main() -> None:
                 json.dumps(
                     {
                         **row,
-                        "source_job_scaffold": f"jobs/{row['job_id']}",
                         "files": {
                             name: digest(data) for name, data in sorted(files.items())
                         },

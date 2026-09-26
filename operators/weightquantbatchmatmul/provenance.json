@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-23T15:56:12.791620",
-  "source_job_scaffold": "jobs/job_dd14f002f64f",
   "files": {
     "csrc/ops/weight_quant_batch_matmul/CMakeLists.txt": "c648c8d6bb9c8e85e25012cf9f5742f0532db7fc4e144d8621d655bc419c37b1",
     "csrc/ops/weight_quant_batch_matmul/op_kernel/wqmm_dequant.cpp": "f24caf210de8bcd1eaa256441fc1ed03052f76eb935fd0fdbb3ac18510ead50d",

@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-20T09:54:03.085283",
-  "source_job_scaffold": "jobs/job_2bcd0f899d41",
   "files": {
     "csrc/ops/mhc_sinkhorn/CMakeLists.txt": "299571639ea2cbd01f55180e5580d386fca3269528b3ddb70102f62404d0fc4f",
     "csrc/ops/mhc_sinkhorn/op_kernel/mhc_diag.h": "bef5f7abec53bdc45dc100fb3ee6fee35315b5834ed1f49e03676227f4309254",

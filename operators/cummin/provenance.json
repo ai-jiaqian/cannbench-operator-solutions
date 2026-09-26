@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-20T09:54:03.085283",
-  "source_job_scaffold": "jobs/job_2bcd0f899d41",
   "files": {
     "csrc/ops/cummin/CMakeLists.txt": "21226064a38912cfd03b5e73d8bbb6c239051ae81325a35f16f7d8892f0b99c2",
     "csrc/ops/cummin/op_kernel/cummin_kernel.cpp": "e1fa16a8b58bd679ed1e896a75d9c976a34fe243876742af6e0c98688a6891df",

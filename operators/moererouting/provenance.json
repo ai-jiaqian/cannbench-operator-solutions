@@ -9,7 +9,6 @@
   "passed_cases": 20,
   "total_cases": 20,
   "updated_at": "2026-09-20T09:54:03.085283",
-  "source_job_scaffold": "jobs/job_2bcd0f899d41",
   "files": {
     "csrc/ops/moe_re_routing/CMakeLists.txt": "fdb34a2dc6036fe4dcef39ad84796bad24efbbc09e7f736ce4c8f73dd4fb4a04",
     "csrc/ops/moe_re_routing/op_kernel/moe_re_routing_host.cpp": "c590a7cd6b863431b7eb3b8b3e7adf6dc4c57ae0f70063a730801e424e263b2f",
